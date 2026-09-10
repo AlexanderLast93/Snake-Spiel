@@ -1,0 +1,7 @@
+# Dieses Projekt ist reines Windows - keine Zeilenenden-Umwandlung.
+* -text
+
+# Binaerdateien ausdruecklich als solche behandeln
+*.ico binary
+*.wav binary
+*.exe binary

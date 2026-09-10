@@ -1,0 +1,22 @@
+# Build-Ergebnisse
+[Bb]in/
+[Oo]bj/
+release/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Betriebssystem
+Thumbs.db
+desktop.ini
+
+# Von Claude gelieferte Hoerproben - das Programm erzeugt die Klaenge selbst
+Claude outputs/
