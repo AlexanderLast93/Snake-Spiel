@@ -1,6 +1,6 @@
-# Snake
+﻿# Snake
 
-Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.2.0.
+Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.3.0.
 
 Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Es gibt drei
 Schwierigkeitsgrade, einen lokal gespeicherten Rekord je Grad und Musik, die das Programm
@@ -10,6 +10,10 @@ Alle drei Grade beschleunigen bis zum selben Endtempo von 42 Millisekunden pro Z
 Unterschied ist allein die Anlaufstrecke: **Langsam** braucht 130 Kugeln dorthin, **Normal** 56,
 **Schnell** 27. Ein Grad ist also kein Deckel, sondern die Frage, wie viel Zeit man zum
 Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, grün, gelb.
+
+Die Schlange gleitet: Die Spiellogik läuft mit fester Schrittrate, gezeichnet wird mit der
+Bildrate des Monitors, dazwischen wird interpoliert — auch durch die Wände hindurch. Fressen
+und Sterben haben Wumms: kurzes Beben, Ring und Funken beim Fressen, Funkenregen beim Tod.
 
 Wer auf **Schnell** lange genug überlebt, wird feststellen, dass das Spiel noch etwas vorhat.
 
@@ -52,6 +56,8 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 |---|---|
 | `Game/GameEngine.cs` | Spielregeln: Bewegung, offene Wände, Kollision, Futter, Punkte — ohne jeden Bezug zur Oberfläche |
 | `Game/Difficulty.cs` | Die drei Schwierigkeitsgrade mit Tempo und Steigerung |
+| `Game/StepClock.cs` | Fixed-Step-Uhr: feste Logikrate, liefert den Interpolationsanteil fürs Zeichnen |
+| `Game/GridMotion.cs` | Bewegung eines Segments zwischen zwei Feldern, wandbewusst (24 → 0 heißt „nach 25“) |
 | `Game/HighScoreService.cs` | Rekord je Grad, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
 | `Game/GameSettings.cs` | Lautstärken, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
 | `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Echo, WAV-Ausgabe |
@@ -59,11 +65,13 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 | `Game/SoundEngine.cs` | Wiedergabe über `MediaPlayer`, Musikschleife, Stummschaltung |
 | `MainWindow.xaml(.cs)` | Fenster, Darstellung, Eingaben |
 | `App.xaml` | Farben und Stile |
+| `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr und Interpolation |
+| `pruefen.cmd` | Baut das Spiel und lässt den Teststand laufen; Protokoll in `Claude outputs\pruefung.log` |
 
-Die Spielregeln stecken bewusst in einer Klasse ohne Oberflächenbezug. Dadurch lassen sie sich
-ohne laufendes Fenster prüfen — beim Bauen wurden so unter anderem der Durchgang durch alle vier
-Wände, das Verhalten des Schwanzes bei Kollisionen und der Futter-Spawn auf einem fast vollen
-Feld getestet.
+Die Spielregeln stecken bewusst in Klassen ohne Oberflächenbezug. Dadurch lassen sie sich ohne
+laufendes Fenster prüfen: `Tests\` ist ein reines Konsolenprojekt, das die Dateien aus `Game\`
+direkt einbindet — wenn es baut, ist bewiesen, dass die Logik kein WPF braucht. Der Teststand
+läuft mit `pruefen.cmd` (Doppelklick) oder `dotnet run -c Release --project Tests`.
 
 ## Selbst bauen
 
@@ -81,7 +89,7 @@ In Visual Studio genügt F5.
 Doppelklick auf `veroeffentlichen.cmd`. Das Skript legt
 
 ```
-release\v1.2.0\Snake.exe
+release\v1.3.0\Snake.exe
 ```
 
 an: eine einzige Datei mit eingebauter .NET-Laufzeit. Sie startet auf jedem 64-Bit-Windows,

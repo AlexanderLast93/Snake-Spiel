@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Teststand für die Spiellogik. Ein reines Konsolenprojekt ohne WPF: Wenn es
+    baut, ist damit bewiesen, dass die Logik in Game\ keine Oberfläche braucht.
+    Ausführen: pruefen.cmd im Projektordner (oder: dotnet run -c Release, mit Option "project Tests")
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Snake_Spiel.Tests</RootNamespace>
+    <AssemblyName>Snake.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Bewusst einzeln aufgezählt: SoundEngine.cs fehlt, weil es MediaPlayer (WPF) nutzt. -->
+    <Compile Include="..\Game\GameEngine.cs" Link="Game\GameEngine.cs" />
+    <Compile Include="..\Game\Difficulty.cs" Link="Game\Difficulty.cs" />
+    <Compile Include="..\Game\GridMotion.cs" Link="Game\GridMotion.cs" />
+    <Compile Include="..\Game\StepClock.cs" Link="Game\StepClock.cs" />
+    <Compile Include="..\Game\HighScoreService.cs" Link="Game\HighScoreService.cs" />
+    <Compile Include="..\Game\GameSettings.cs" Link="Game\GameSettings.cs" />
+    <Compile Include="..\Game\Synth.cs" Link="Game\Synth.cs" />
+    <Compile Include="..\Game\SoundBank.cs" Link="Game\SoundBank.cs" />
+  </ItemGroup>
+
+</Project>

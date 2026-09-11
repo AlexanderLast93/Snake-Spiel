@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,6 +16,9 @@ namespace Snake_Spiel
     /// <summary>
     /// Fenster, Darstellung und Steuerung. Die Spielregeln stecken vollständig
     /// in <see cref="GameEngine"/> - hier wird nur gezeichnet und getastet.
+    /// Die Logik läuft mit fester Schrittlänge (<see cref="StepClock"/>), gezeichnet
+    /// wird mit der Bildrate des Fensters (<see cref="CompositionTarget.Rendering"/>);
+    /// dazwischen gleitet die Schlange von Feld zu Feld, statt zu springen.
     /// </summary>
     public partial class MainWindow : Window
     {
@@ -27,6 +31,18 @@ namespace Snake_Spiel
         private const double HardcoreFoodSeconds = 3.0;
 
         private const double ImpossibleFoodSeconds = 1.5;
+
+        // Juice - alles in Pixeln bzw. Millisekunden. Klein beim Fressen, damit es
+        // bei 24 Zügen pro Sekunde nicht nervt; kräftig beim Tod, weil der es verdient.
+        private const double EatShakePixels = 3.0;
+        private const double EatShakeMs = 120.0;
+        private const double DeathShakePixels = 11.0;
+        private const double DeathShakeMs = 420.0;
+        private const double DeathOverlayDelayMs = 720.0;
+        private const int DeathParticleCount = 44;
+        private const int EatParticleCount = 10;
+        private const int MaxParticles = 96;
+        private const double ParticleGravity = 820.0;
 
         // Jeder Schwierigkeitsgrad hat seine eigene Farbe. Der Tod ist grau, damit er
         // sich von allen Spielfarben abhebt - besonders von Orange im Hardcore-Zustand.
@@ -57,11 +73,34 @@ namespace Snake_Spiel
         private readonly HighScoreService _highScores = new();
         private readonly GameSettings _settings = new();
         private readonly SoundEngine _sounds;
-        private readonly DispatcherTimer _timer;
+        private readonly StepClock _clock = new(Difficulty.Normal.StartIntervalMs);
+        private readonly Stopwatch _frameWatch = new();
+        private readonly Random _fx = new();
         private readonly List<Rectangle> _segments = new();
+        private readonly List<TranslateTransform> _segmentOffsets = new();
+        private readonly List<Rectangle> _ghosts = new();
+        private readonly List<TranslateTransform> _ghostOffsets = new();
         private readonly Ellipse[] _eyes = new Ellipse[2];
+        private readonly TranslateTransform[] _eyeOffsets = new TranslateTransform[2];
+        private readonly FrameStats _frameStats = new();
+        private readonly List<Particle> _particles = new();
+        private readonly List<Ellipse> _rings = new();
+        private readonly TranslateTransform _boardShake = new();
+        private readonly ScaleTransform _foodPop = new(1.0, 1.0);
+        private readonly ScaleTransform _headBump = new(1.0, 1.0);
 
         private Ellipse _food = null!;
+        private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
+        private bool _loopRunning;
+        private bool _diagnosticsVisible;
+        private bool _effectsEnabled = true;
+        private double _diagnosticsDueMs;
+        private double _shakeAmplitude;
+        private double _shakeRemainingMs;
+        private double _shakeTotalMs;
+        private double _overlayDueMs = -1.0;
+        private bool _deathIsRecord;
+        private int _ringCursor;
         private Brush[] _bodyBrushes = Array.Empty<Brush>();
         private SnakePalette _brushPalette;
         private Difficulty _difficulty = Difficulty.Normal;
@@ -80,11 +119,7 @@ namespace Snake_Spiel
 
             _sounds = new SoundEngine(_settings);
 
-            _timer = new DispatcherTimer(DispatcherPriority.Render)
-            {
-                Interval = TimeSpan.FromMilliseconds(_difficulty.StartIntervalMs)
-            };
-            _timer.Tick += OnTick;
+            BoardShakeHost.RenderTransform = _boardShake;
 
             BuildGrid();
             BuildFood();
@@ -119,6 +154,94 @@ namespace Snake_Spiel
 
         /// <summary>Farbsatz der Schlange: heller Kopf, dunkler Schwanz, passender Schein.</summary>
         private readonly record struct SnakePalette(Color Head, Color Tail, Color Glow);
+
+        /// <summary>Ein Funke: Form aus dem Pool plus Physik. Wird pro Bild weitergerechnet.</summary>
+        private sealed class Particle
+        {
+            public Ellipse Shape { get; init; } = null!;
+
+            public double X { get; set; }
+
+            public double Y { get; set; }
+
+            public double VelocityX { get; set; }
+
+            public double VelocityY { get; set; }
+
+            public double Size { get; set; }
+
+            public double LifeMs { get; set; }
+
+            public double TotalLifeMs { get; set; }
+
+            public double Gravity { get; set; }
+
+            public bool Alive => LifeMs > 0.0;
+        }
+
+        /// <summary>
+        /// Bildzeit-Statistik für die Messanzeige (F3). Zwei Uhren nebeneinander: die
+        /// Bildschirmuhr von WPF (RenderingTime, so sieht es der Monitor) und die
+        /// Stoppuhr im UI-Thread (so spät oder früh war der Handler dran). Klaffen die
+        /// beiden auseinander, ruckelt es wegen der Zeitmessung, nicht wegen der Grafik.
+        /// </summary>
+        private sealed class FrameStats
+        {
+            private const int Window = 120;
+
+            private readonly double[] _present = new double[Window];
+            private readonly double[] _handler = new double[Window];
+            private int _cursor;
+            private int _count;
+
+            public void Add(double presentMs, double handlerMs)
+            {
+                _present[_cursor] = presentMs;
+                _handler[_cursor] = handlerMs;
+                _cursor = (_cursor + 1) % Window;
+                if (_count < Window)
+                {
+                    _count++;
+                }
+            }
+
+            public string Describe()
+            {
+                if (_count < 10)
+                {
+                    return "Messung läuft an …";
+                }
+
+                double presentSum = 0.0;
+                double presentMax = 0.0;
+                double handlerMax = 0.0;
+                double handlerMin = double.MaxValue;
+                int spikes = 0;
+
+                for (int i = 0; i < _count; i++)
+                {
+                    double p = _present[i];
+                    double h = _handler[i];
+                    presentSum += p;
+                    presentMax = Math.Max(presentMax, p);
+                    handlerMax = Math.Max(handlerMax, h);
+                    handlerMin = Math.Min(handlerMin, h);
+
+                    if (p > 25.0)
+                    {
+                        spikes++;
+                    }
+                }
+
+                double avg = presentSum / _count;
+                double fps = avg > 0.0 ? 1000.0 / avg : 0.0;
+                double windowSeconds = presentSum / 1000.0;
+                double spikesPerSecond = windowSeconds > 0.0 ? spikes / windowSeconds : 0.0;
+
+                return $"{fps:0} FPS · Bild Ø {avg:0.0} ms, max {presentMax:0.0} ms · Ausreißer >25 ms: {spikesPerSecond:0.0}/s\n"
+                     + $"Handler-Abstand {handlerMin:0.0}–{handlerMax:0.0} ms (Stoppuhr, nur zur Diagnose)";
+            }
+        }
 
         /// <summary>
         /// Farbsatz zum aktuellen Zustand: der gewählte Grad bestimmt die Grundfarbe,
@@ -201,8 +324,13 @@ namespace Snake_Spiel
                 RenderTransformOrigin = new Point(0.5, 0.5)
             };
 
+            // Dauerpuls und Erscheinen-Pop laufen getrennt, damit sie sich nicht
+            // gegenseitig die Animation wegnehmen.
             var scale = new ScaleTransform(1.0, 1.0);
-            _food.RenderTransform = scale;
+            var group = new TransformGroup();
+            group.Children.Add(scale);
+            group.Children.Add(_foodPop);
+            _food.RenderTransform = group;
             FoodCanvas.Children.Add(_food);
 
             var pulse = new DoubleAnimation
@@ -224,13 +352,16 @@ namespace Snake_Spiel
         {
             for (int i = 0; i < _eyes.Length; i++)
             {
+                _eyeOffsets[i] = new TranslateTransform();
                 _eyes[i] = new Ellipse
                 {
                     Width = 6,
                     Height = 6,
-                    Fill = new SolidColorBrush(Color.FromRgb(0x04, 0x14, 0x1C))
+                    Fill = new SolidColorBrush(Color.FromRgb(0x04, 0x14, 0x1C)),
+                    RenderTransform = _eyeOffsets[i]
                 };
 
+                Canvas.SetZIndex(_eyes[i], 100);
                 SnakeCanvas.Children.Add(_eyes[i]);
             }
         }
@@ -241,26 +372,35 @@ namespace Snake_Spiel
 
         private void ShowMenu()
         {
-            _timer.Stop();
+            StopLoop();
+            CancelDeathSequence();
             _sounds.StopMusic();
             _state = ViewState.Menu;
 
             _engine.Reset();
             _engine.FoodLifetimeTicks = 0;
+            _clock.Reset();
             _lastLevel = 1;
             _stage = EscalationStage.Normal;
             ApplyPalette();
 
-            Render();
+            Render(0.0);
             UpdateHud();
             UpdateMenuRecords();
 
             Overlay.Background = OverlayStrong;
             ShowOnlyPanel(MenuPanel);
+
+            if (_diagnosticsVisible)
+            {
+                StartLoop();
+            }
         }
 
         private void StartGame(Difficulty difficulty)
         {
+            CancelDeathSequence();
+
             _difficulty = difficulty;
             _state = ViewState.Running;
             _lastLevel = 1;
@@ -278,10 +418,12 @@ namespace Snake_Spiel
             HideOverlay();
 
             UpdateHud();
-            Render();
+            Render(0.0);
 
-            _timer.Interval = TimeSpan.FromMilliseconds(difficulty.IntervalFor(0));
-            _timer.Start();
+            _clock.IntervalMs = difficulty.IntervalFor(0);
+            _clock.Reset();
+            StartLoop();
+
             _sounds.PlayEffect(SoundEngine.EffectStart);
             _sounds.StartMusic(difficulty.Key);
         }
@@ -290,7 +432,7 @@ namespace Snake_Spiel
         {
             if (_state == ViewState.Running)
             {
-                _timer.Stop();
+                StopLoop();
                 _sounds.PauseMusic();
                 _state = ViewState.Paused;
                 Overlay.Background = OverlaySoft;
@@ -301,7 +443,7 @@ namespace Snake_Spiel
                 _state = ViewState.Running;
                 HideOverlay();
                 _sounds.ResumeMusic();
-                _timer.Start();
+                StartLoop();
             }
         }
 
@@ -375,6 +517,8 @@ namespace Snake_Spiel
             fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1700))));
             fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2400))));
             HardcoreBanner.BeginAnimation(OpacityProperty, fade);
+
+            Shake(DeathShakePixels * 0.6, DeathShakeMs * 0.7);
         }
 
         /// <summary>
@@ -400,69 +544,253 @@ namespace Snake_Spiel
             _engine.FoodLifetimeTicks = Math.Max(4, (int)Math.Round(seconds * 1000.0 / intervalMs));
         }
 
-        private void OnTick(object? sender, EventArgs e)
+        // ------------------------------------------------------------------
+        // Bildschleife: feste Logikrate, Darstellung pro Bild
+        // ------------------------------------------------------------------
+
+        private void StartLoop()
+        {
+            if (_loopRunning)
+            {
+                return;
+            }
+
+            _loopRunning = true;
+            _lastRenderingTime = TimeSpan.MinValue;
+            _frameWatch.Restart();
+            CompositionTarget.Rendering += OnFrame;
+        }
+
+        private void StopLoop()
+        {
+            if (!_loopRunning)
+            {
+                return;
+            }
+
+            _loopRunning = false;
+            CompositionTarget.Rendering -= OnFrame;
+        }
+
+        /// <summary>
+        /// Wird von WPF einmal pro Bild aufgerufen. Erst holt die Logik ihre fälligen
+        /// Schritte nach, dann werden die Effekte weitergerechnet, zum Schluss wird
+        /// die Schlange an ihrer Zwischenposition gezeichnet.
+        /// </summary>
+        private void OnFrame(object? sender, EventArgs e)
+        {
+            // Die Stoppuhr sagt nur, wann dieser Handler dran war - das schwankt von
+            // Bild zu Bild, auch wenn der Monitor stur im Takt bleibt. Für die Bewegung
+            // zählt allein die Bildschirmuhr von WPF (RenderingTime): Sie ist an den
+            // Takt der Ausgabe gekoppelt. Mit der Stoppuhr gerechnet, springt die
+            // Schlange mal 7 und mal 3 Pixel - das ist genau das Mikroruckeln.
+            double handlerMs = _frameWatch.Elapsed.TotalMilliseconds;
+            _frameWatch.Restart();
+
+            double elapsedMs;
+            if (e is RenderingEventArgs rendering)
+            {
+                TimeSpan now = rendering.RenderingTime;
+
+                // WPF kann das Ereignis innerhalb eines Bildes mehrfach auslösen - dann
+                // stimmt die Renderzeit überein, und das zweite Mal ist nichts zu tun.
+                if (now == _lastRenderingTime)
+                {
+                    return;
+                }
+
+                elapsedMs = _lastRenderingTime == TimeSpan.MinValue
+                    ? 0.0
+                    : (now - _lastRenderingTime).TotalMilliseconds;
+                _lastRenderingTime = now;
+            }
+            else
+            {
+                elapsedMs = handlerMs;
+            }
+
+            if (_diagnosticsVisible)
+            {
+                _frameStats.Add(elapsedMs, handlerMs);
+                _diagnosticsDueMs -= elapsedMs;
+                if (_diagnosticsDueMs <= 0.0)
+                {
+                    _diagnosticsDueMs = 500.0;
+                    UpdateDiagnosticsText();
+                }
+            }
+
+            if (_state == ViewState.Running)
+            {
+                int steps = _clock.Advance(elapsedMs);
+                for (int i = 0; i < steps; i++)
+                {
+                    if (!RunStep())
+                    {
+                        break;
+                    }
+                }
+            }
+
+            UpdateEffects(elapsedMs);
+
+            if (_state == ViewState.Running)
+            {
+                Render(_clock.Alpha);
+            }
+            else if (!EffectsActive && !_diagnosticsVisible)
+            {
+                // Nach dem Tod läuft die Schleife nur noch für Funken und Beben weiter.
+                StopLoop();
+            }
+        }
+
+        /// <summary>Genau ein Logikschritt samt Folgen. False, wenn das Spiel damit endet.</summary>
+        private bool RunStep()
         {
             StepResult result = _engine.Step();
 
             switch (result)
             {
                 case StepResult.Ate:
-                    _sounds.PlayEffect(SoundEngine.EffectEat);
-
-                    // Der bisherige Rekord fällt: einmal pro Runde die Fanfare.
-                    if (!_recordAnnounced && _recordAtStart > 0 && _engine.Score > _recordAtStart)
-                    {
-                        _recordAnnounced = true;
-                        _sounds.PlayEffect(SoundEngine.EffectRecord);
-                    }
-
-                    int level = _difficulty.LevelFor(_engine.FoodEaten);
-                    if (level > _lastLevel)
-                    {
-                        _lastLevel = level;
-
-                        EscalationStage stage = _difficulty.StageFor(_engine.FoodEaten);
-                        if (stage > _stage)
-                        {
-                            EnterStage(stage);
-                        }
-                        else
-                        {
-                            _sounds.PlayEffect(SoundEngine.EffectLevelUp);
-                        }
-                    }
-
-                    _timer.Interval = TimeSpan.FromMilliseconds(_difficulty.IntervalFor(_engine.FoodEaten));
-                    UpdateFoodLifetime();
-                    RefreshBodyBrushes(_engine.Snake.Count, CurrentPalette);
-                    UpdateHud();
-                    break;
+                    OnAte();
+                    return true;
 
                 case StepResult.Died:
-                    EndGame(won: false);
-                    return;
+                    BeginDeath();
+                    return false;
 
                 case StepResult.Won:
                     UpdateHud();
                     EndGame(won: true);
-                    return;
-            }
+                    return false;
 
-            Render();
+                default:
+                    if (_engine.FoodRelocated)
+                    {
+                        PopFood();
+                    }
+
+                    return true;
+            }
         }
 
-        private void EndGame(bool won)
+        private void OnAte()
         {
-            _timer.Stop();
+            _sounds.PlayEffect(SoundEngine.EffectEat);
+
+            // Der bisherige Rekord fällt: einmal pro Runde die Fanfare.
+            if (!_recordAnnounced && _recordAtStart > 0 && _engine.Score > _recordAtStart)
+            {
+                _recordAnnounced = true;
+                _sounds.PlayEffect(SoundEngine.EffectRecord);
+            }
+
+            int level = _difficulty.LevelFor(_engine.FoodEaten);
+            if (level > _lastLevel)
+            {
+                _lastLevel = level;
+
+                EscalationStage stage = _difficulty.StageFor(_engine.FoodEaten);
+                if (stage > _stage)
+                {
+                    EnterStage(stage);
+                }
+                else
+                {
+                    _sounds.PlayEffect(SoundEngine.EffectLevelUp);
+                }
+            }
+
+            _clock.IntervalMs = _difficulty.IntervalFor(_engine.FoodEaten);
+            UpdateFoodLifetime();
+            RefreshBodyBrushes(_engine.Snake.Count, CurrentPalette);
+            UpdateHud();
+
+            // Juice: der Kopf ist jetzt dort, wo das Futter lag.
+            GridPoint bite = _engine.Head;
+            double centerX = (bite.X * CellSize) + (CellSize / 2.0);
+            double centerY = (bite.Y * CellSize) + (CellSize / 2.0);
+
+            Shake(EatShakePixels, EatShakeMs);
+            SpawnRing(centerX, centerY);
+            SpawnParticles(centerX, centerY, EatParticleCount, 70.0, 210.0, 380.0, 3.0, 5.5, FoodSparkColors, ParticleGravity * 0.35);
+            BumpHead();
+            PopFood();
+        }
+
+        /// <summary>
+        /// Der Tod bekommt seinen Moment: Beben, Funken, ein Aufblitzen der Schlange -
+        /// und erst danach die Tafel. Tastendrücke wirken sofort, die Tafel wird
+        /// dann einfach nicht mehr gezeigt.
+        /// </summary>
+        private void BeginDeath()
+        {
             _state = ViewState.GameOver;
             _sounds.StopMusic();
             _sounds.PlayEffect(SoundEngine.EffectGameOver);
 
-            bool isRecord = _highScores.TrySubmit(_difficulty.Key, _engine.Score);
+            // Sofort eintragen - wer während der Funken schon R drückt, darf
+            // seinen Rekord nicht verlieren.
+            _deathIsRecord = _highScores.TrySubmit(_difficulty.Key, _engine.Score);
+
+            SnakePalette palette = CurrentPalette;
+            GridPoint head = _engine.Head;
+            double centerX = (head.X * CellSize) + (CellSize / 2.0);
+            double centerY = (head.Y * CellSize) + (CellSize / 2.0);
+
+            Shake(DeathShakePixels, DeathShakeMs);
+            SpawnParticles(centerX, centerY, DeathParticleCount, 120.0, 460.0, 780.0, 4.0, 9.0,
+                new[] { palette.Head, palette.Glow, palette.Tail, Colors.White }, ParticleGravity);
+
+            // Kurzes Aufblitzen, danach wird die Schlange grau.
+            var flash = new DoubleAnimationUsingKeyFrames();
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.15, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(70))));
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.15, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140))));
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(210))));
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.15, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(280))));
+            flash.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(350))));
+            flash.FillBehavior = FillBehavior.Stop;
+            SnakeCanvas.BeginAnimation(OpacityProperty, flash);
+
+            _overlayDueMs = DeathOverlayDelayMs;
+            Render(0.0);
+        }
+
+        /// <summary>Bricht den Todesmoment ab, wenn schon neu gestartet oder ins Menü gewechselt wird.</summary>
+        private void CancelDeathSequence()
+        {
+            _overlayDueMs = -1.0;
+            _shakeRemainingMs = 0.0;
+            _boardShake.X = 0.0;
+            _boardShake.Y = 0.0;
+            SnakeCanvas.BeginAnimation(OpacityProperty, null);
+            SnakeCanvas.Opacity = 1.0;
+            ClearParticles();
+
+            foreach (Ellipse ring in _rings)
+            {
+                ring.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void EndGame(bool won)
+        {
+            _state = ViewState.GameOver;
+            _overlayDueMs = -1.0;
+            _sounds.StopMusic();
+
+            if (won)
+            {
+                _sounds.PlayEffect(SoundEngine.EffectGameOver);
+            }
+
+            bool isRecord = won ? _highScores.TrySubmit(_difficulty.Key, _engine.Score) : _deathIsRecord;
 
             RefreshBodyBrushes(_engine.Snake.Count, PaletteDead);
             SnakeGlow.Color = PaletteDead.Glow;
-            Render();
+            Render(0.0);
             UpdateHud();
 
             GameOverScoreText.Text = $"{_engine.Score} Punkte";
@@ -479,32 +807,369 @@ namespace Snake_Spiel
         }
 
         // ------------------------------------------------------------------
+        // Juice: Beben, Funken, Ringe, Pops
+        // ------------------------------------------------------------------
+
+        private static readonly Color[] FoodSparkColors =
+        {
+            Color.FromRgb(0xFF, 0xD9, 0xF4), Color.FromRgb(0xFF, 0x4F, 0xD8), Color.FromRgb(0xFF, 0xFF, 0xFF)
+        };
+
+        private bool EffectsActive => _shakeRemainingMs > 0.0 || _overlayDueMs >= 0.0 || _particles.Count > 0;
+
+        private void Shake(double pixels, double durationMs)
+        {
+            // Ein stärkeres Beben löst ein schwächeres ab, nie umgekehrt.
+            if (_shakeRemainingMs > 0.0 && _shakeAmplitude * (_shakeRemainingMs / _shakeTotalMs) > pixels)
+            {
+                return;
+            }
+
+            _shakeAmplitude = pixels;
+            _shakeTotalMs = durationMs;
+            _shakeRemainingMs = durationMs;
+        }
+
+        /// <summary>Rechnet Beben, Funken und die Wartezeit bis zur Tafel um ein Bild weiter.</summary>
+        private void UpdateEffects(double elapsedMs)
+        {
+            if (_shakeRemainingMs > 0.0)
+            {
+                _shakeRemainingMs -= elapsedMs;
+                if (_shakeRemainingMs <= 0.0)
+                {
+                    _shakeRemainingMs = 0.0;
+                    _boardShake.X = 0.0;
+                    _boardShake.Y = 0.0;
+                }
+                else
+                {
+                    double strength = _shakeAmplitude * (_shakeRemainingMs / _shakeTotalMs);
+                    _boardShake.X = ((_fx.NextDouble() * 2.0) - 1.0) * strength;
+                    _boardShake.Y = ((_fx.NextDouble() * 2.0) - 1.0) * strength;
+                }
+            }
+
+            if (_particles.Count > 0)
+            {
+                double dt = elapsedMs / 1000.0;
+                for (int i = _particles.Count - 1; i >= 0; i--)
+                {
+                    Particle particle = _particles[i];
+                    particle.LifeMs -= elapsedMs;
+
+                    if (!particle.Alive)
+                    {
+                        particle.Shape.Visibility = Visibility.Collapsed;
+                        _particles.RemoveAt(i);
+                        continue;
+                    }
+
+                    particle.VelocityY += particle.Gravity * dt;
+                    particle.X += particle.VelocityX * dt;
+                    particle.Y += particle.VelocityY * dt;
+
+                    double life = particle.LifeMs / particle.TotalLifeMs;
+                    double size = particle.Size * (0.35 + (0.65 * life));
+
+                    particle.Shape.Width = size;
+                    particle.Shape.Height = size;
+                    particle.Shape.Opacity = life;
+                    Canvas.SetLeft(particle.Shape, particle.X - (size / 2.0));
+                    Canvas.SetTop(particle.Shape, particle.Y - (size / 2.0));
+                }
+            }
+
+            if (_overlayDueMs >= 0.0)
+            {
+                _overlayDueMs -= elapsedMs;
+                if (_overlayDueMs < 0.0)
+                {
+                    _overlayDueMs = -1.0;
+                    EndGame(won: false);
+                }
+            }
+        }
+
+        private void SpawnParticles(
+            double centerX,
+            double centerY,
+            int count,
+            double minSpeed,
+            double maxSpeed,
+            double lifeMs,
+            double minSize,
+            double maxSize,
+            Color[] colors,
+            double gravity)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (_particles.Count >= MaxParticles)
+                {
+                    return;
+                }
+
+                Ellipse shape = TakeParticleShape();
+                double angle = _fx.NextDouble() * Math.PI * 2.0;
+                double speed = minSpeed + (_fx.NextDouble() * (maxSpeed - minSpeed));
+                double life = lifeMs * (0.6 + (0.4 * _fx.NextDouble()));
+
+                var brush = new SolidColorBrush(colors[_fx.Next(colors.Length)]);
+                brush.Freeze();
+                shape.Fill = brush;
+                shape.Visibility = Visibility.Visible;
+
+                _particles.Add(new Particle
+                {
+                    Shape = shape,
+                    X = centerX,
+                    Y = centerY,
+                    VelocityX = Math.Cos(angle) * speed,
+                    VelocityY = (Math.Sin(angle) * speed) - (gravity * 0.12),
+                    Size = minSize + (_fx.NextDouble() * (maxSize - minSize)),
+                    LifeMs = life,
+                    TotalLifeMs = life,
+                    Gravity = gravity
+                });
+            }
+        }
+
+        /// <summary>Holt eine unbenutzte Form aus dem Canvas oder legt eine neue an.</summary>
+        private Ellipse TakeParticleShape()
+        {
+            foreach (UIElement child in ParticleCanvas.Children)
+            {
+                if (child is Ellipse candidate && candidate.Visibility == Visibility.Collapsed && !ReferenceEquals(candidate.Tag, RingTag))
+                {
+                    return candidate;
+                }
+            }
+
+            var shape = new Ellipse { Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+            ParticleCanvas.Children.Add(shape);
+            return shape;
+        }
+
+        private void ClearParticles()
+        {
+            foreach (Particle particle in _particles)
+            {
+                particle.Shape.Visibility = Visibility.Collapsed;
+            }
+
+            _particles.Clear();
+        }
+
+        private static readonly object RingTag = new();
+
+        /// <summary>Ein Ring, der sich von der Fress-Stelle ausdehnt und dabei verblasst.</summary>
+        private void SpawnRing(double centerX, double centerY)
+        {
+            const int poolSize = 4;
+            const double baseSize = 20.0;
+
+            if (_rings.Count < poolSize)
+            {
+                var ring = new Ellipse
+                {
+                    Width = baseSize,
+                    Height = baseSize,
+                    StrokeThickness = 3.0,
+                    Stroke = new SolidColorBrush(Color.FromRgb(0xFF, 0x7A, 0xE2)),
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    RenderTransform = new ScaleTransform(1.0, 1.0),
+                    IsHitTestVisible = false,
+                    Visibility = Visibility.Collapsed,
+                    Tag = RingTag
+                };
+
+                ParticleCanvas.Children.Add(ring);
+                _rings.Add(ring);
+            }
+
+            Ellipse target = _rings[_ringCursor];
+            _ringCursor = (_ringCursor + 1) % _rings.Count;
+
+            Canvas.SetLeft(target, centerX - (baseSize / 2.0));
+            Canvas.SetTop(target, centerY - (baseSize / 2.0));
+            target.Visibility = Visibility.Visible;
+
+            var grow = new DoubleAnimation(0.4, 2.6, TimeSpan.FromMilliseconds(320))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+
+            // HoldEnd: bei Deckkraft 0 stehen bleiben. Mit Stop würde die Deckkraft
+            // auf 1 zurückspringen, und der große Ring stünde plötzlich wieder da.
+            var fade = new DoubleAnimation(0.9, 0.0, TimeSpan.FromMilliseconds(320))
+            {
+                FillBehavior = FillBehavior.HoldEnd
+            };
+
+            var scale = (ScaleTransform)target.RenderTransform;
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+            target.BeginAnimation(OpacityProperty, fade);
+        }
+
+        /// <summary>Frisch gesetztes Futter springt mit Überschwinger auf seine Größe.</summary>
+        private void PopFood()
+        {
+            var pop = new DoubleAnimationUsingKeyFrames();
+            pop.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            pop.KeyFrames.Add(new EasingDoubleKeyFrame(1.3, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(130)),
+                new CubicEase { EasingMode = EasingMode.EaseOut }));
+            pop.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(260)),
+                new CubicEase { EasingMode = EasingMode.EaseInOut }));
+            pop.FillBehavior = FillBehavior.Stop;
+
+            _foodPop.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+            _foodPop.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+        }
+
+        /// <summary>Der Kopf schwillt beim Zubeißen kurz an.</summary>
+        private void BumpHead()
+        {
+            var bump = new DoubleAnimationUsingKeyFrames();
+            bump.KeyFrames.Add(new DiscreteDoubleKeyFrame(1.28, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            bump.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)),
+                new CubicEase { EasingMode = EasingMode.EaseOut }));
+            bump.FillBehavior = FillBehavior.Stop;
+
+            _headBump.BeginAnimation(ScaleTransform.ScaleXProperty, bump);
+            _headBump.BeginAnimation(ScaleTransform.ScaleYProperty, bump);
+        }
+
+        // ------------------------------------------------------------------
+        // Messanzeige (F3) und Scheineffekte (F4) - zum Eingrenzen von Rucklern
+        // ------------------------------------------------------------------
+
+        private void ToggleDiagnostics()
+        {
+            _diagnosticsVisible = !_diagnosticsVisible;
+            DiagText.Visibility = _diagnosticsVisible ? Visibility.Visible : Visibility.Collapsed;
+            _diagnosticsDueMs = 0.0;
+
+            if (_diagnosticsVisible)
+            {
+                UpdateDiagnosticsText();
+                if (!_loopRunning)
+                {
+                    // Auch im Menü messen können - die Schleife läuft dann nur fürs Zählen.
+                    StartLoop();
+                }
+            }
+        }
+
+        private void UpdateDiagnosticsText()
+        {
+            int tier = RenderCapability.Tier >> 16;
+            double dpiScale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+
+            DiagText.Text =
+                _frameStats.Describe() + "\n"
+                + $"Render-Tier {tier} (2 = Grafikkarte, 0 = Software) · DPI ×{dpiScale:0.00} · Schritt {_clock.IntervalMs:0} ms"
+                + $" · Scheineffekte {(_effectsEnabled ? "an" : "aus")} (F4) · F3 schließt";
+        }
+
+        /// <summary>
+        /// Schaltet alle Blur-Effekte ab. Ruckelt es danach nicht mehr, ist die
+        /// Grafik schuld und nicht die Zeitmessung.
+        /// </summary>
+        private void ToggleEffects()
+        {
+            _effectsEnabled = !_effectsEnabled;
+
+            if (_effectsEnabled)
+            {
+                SnakeCanvas.Effect = SnakeGlow;
+                FoodCanvas.Effect = FoodGlow;
+                BoardGlow.Effect = BoardGlowEffect;
+            }
+            else
+            {
+                SnakeCanvas.Effect = null;
+                FoodCanvas.Effect = null;
+                BoardGlow.Effect = null;
+            }
+
+            if (_diagnosticsVisible)
+            {
+                UpdateDiagnosticsText();
+            }
+        }
+
+        // ------------------------------------------------------------------
         // Darstellung
         // ------------------------------------------------------------------
 
-        /// <summary>Zeichnet Schlange und Futter an die aktuellen Rasterpositionen.</summary>
-        private void Render()
+        /// <summary>
+        /// Zeichnet Schlange und Futter. <paramref name="alpha"/> sagt, wie weit der
+        /// laufende Schritt ist: 0 = alle Segmente auf ihrem vorherigen Feld,
+        /// 1 = alle auf dem neuen. Ein Segment, das durch die Wand geht, bekommt
+        /// ein Spiegelbild auf der Gegenseite, damit es dort schon hereinkommt,
+        /// während es hier noch hinausgleitet.
+        /// </summary>
+        private void Render(double alpha)
         {
             IReadOnlyList<GridPoint> snake = _engine.Snake;
+            IReadOnlyList<GridPoint> previous = _engine.PreviousSnake;
             EnsureSegments(snake.Count);
 
             double size = CellSize - SegmentGap;
+            double boardWidth = Columns * CellSize;
+            double boardHeight = Rows * CellSize;
+            int ghostsUsed = 0;
+            double headCenterX = 0.0;
+            double headCenterY = 0.0;
 
             for (int i = 0; i < snake.Count; i++)
             {
+                GridMotion motion = i < previous.Count
+                    ? GridMotion.Between(previous[i], snake[i], Columns, Rows)
+                    : GridMotion.Stay(snake[i]);
+
+                (double cellX, double cellY) = motion.At(alpha);
+                double left = (cellX * CellSize) + (SegmentGap / 2.0);
+                double top = (cellY * CellSize) + (SegmentGap / 2.0);
+
                 Rectangle rect = _segments[i];
                 rect.Visibility = Visibility.Visible;
                 rect.Fill = _bodyBrushes[Math.Min(i, _bodyBrushes.Length - 1)];
-
-                Canvas.SetLeft(rect, (snake[i].X * CellSize) + (SegmentGap / 2.0));
-                Canvas.SetTop(rect, (snake[i].Y * CellSize) + (SegmentGap / 2.0));
 
                 // Der Kopf ist etwas runder als der Rest.
                 double radius = i == 0 ? 11 : 8;
                 rect.RadiusX = radius;
                 rect.RadiusY = radius;
-                rect.Width = size;
-                rect.Height = size;
+
+                // Verschieben per Transform statt Canvas.Left/Top: kein Layout-Durchlauf
+                // pro Bild, keine Rundung auf ganze Pixel - die Bewegung bleibt subpixelgenau.
+                TranslateTransform offset = _segmentOffsets[i];
+                offset.X = left;
+                offset.Y = top;
+
+                if (i == 0)
+                {
+                    headCenterX = left + (size / 2.0);
+                    headCenterY = top + (size / 2.0);
+                }
+
+                if (motion.CrossesEdge(Columns, Rows))
+                {
+                    int ghostIndex = ghostsUsed++;
+                    Rectangle ghost = EnsureGhost(ghostIndex);
+                    ghost.Visibility = Visibility.Visible;
+                    ghost.Fill = rect.Fill;
+                    ghost.RadiusX = radius;
+                    ghost.RadiusY = radius;
+
+                    double shiftX = motion.ToX > Columns - 1 ? -boardWidth : motion.ToX < 0 ? boardWidth : 0.0;
+                    double shiftY = motion.ToY > Rows - 1 ? -boardHeight : motion.ToY < 0 ? boardHeight : 0.0;
+                    TranslateTransform ghostOffset = _ghostOffsets[ghostIndex];
+                    ghostOffset.X = left + shiftX;
+                    ghostOffset.Y = top + shiftY;
+                }
             }
 
             for (int i = snake.Count; i < _segments.Count; i++)
@@ -512,7 +1177,31 @@ namespace Snake_Spiel
                 _segments[i].Visibility = Visibility.Collapsed;
             }
 
-            PlaceEyes(snake[0], _engine.CurrentDirection);
+            for (int i = ghostsUsed; i < _ghosts.Count; i++)
+            {
+                _ghosts[i].Visibility = Visibility.Collapsed;
+            }
+
+            // Die Augen wechseln die Seite, sobald die Kopfmitte durch die Wand ist.
+            if (headCenterX < 0.0)
+            {
+                headCenterX += boardWidth;
+            }
+            else if (headCenterX > boardWidth)
+            {
+                headCenterX -= boardWidth;
+            }
+
+            if (headCenterY < 0.0)
+            {
+                headCenterY += boardHeight;
+            }
+            else if (headCenterY > boardHeight)
+            {
+                headCenterY -= boardHeight;
+            }
+
+            PlaceEyes(headCenterX, headCenterY, _engine.CurrentDirection);
 
             if (_engine.HasFood)
             {
@@ -532,11 +1221,8 @@ namespace Snake_Spiel
             }
         }
 
-        private void PlaceEyes(GridPoint head, Direction direction)
+        private void PlaceEyes(double centerX, double centerY, Direction direction)
         {
-            double centerX = (head.X * CellSize) + (CellSize / 2.0);
-            double centerY = (head.Y * CellSize) + (CellSize / 2.0);
-
             double forwardX = direction == Direction.Right ? 1 : direction == Direction.Left ? -1 : 0;
             double forwardY = direction == Direction.Down ? 1 : direction == Direction.Up ? -1 : 0;
 
@@ -553,9 +1239,8 @@ namespace Snake_Spiel
                 double x = centerX + (forwardX * forwardOffset) + (sideX * sideOffset * sign);
                 double y = centerY + (forwardY * forwardOffset) + (sideY * sideOffset * sign);
 
-                Canvas.SetLeft(_eyes[i], x - (_eyes[i].Width / 2.0));
-                Canvas.SetTop(_eyes[i], y - (_eyes[i].Height / 2.0));
-                Canvas.SetZIndex(_eyes[i], 100);
+                _eyeOffsets[i].X = x - (_eyes[i].Width / 2.0);
+                _eyeOffsets[i].Y = y - (_eyes[i].Height / 2.0);
                 _eyes[i].Visibility = Visibility.Visible;
             }
         }
@@ -565,15 +1250,54 @@ namespace Snake_Spiel
         {
             while (_segments.Count < required)
             {
+                var offset = new TranslateTransform();
                 var rect = new Rectangle
                 {
                     Width = CellSize - SegmentGap,
-                    Height = CellSize - SegmentGap
+                    Height = CellSize - SegmentGap,
+                    RenderTransformOrigin = new Point(0.5, 0.5)
                 };
 
+                if (_segments.Count == 0)
+                {
+                    // Der Kopf bekommt zusätzlich seinen Bump: erst um die eigene Mitte
+                    // skalieren, dann an die Position schieben. Index 0 bleibt immer der Kopf.
+                    var group = new TransformGroup();
+                    group.Children.Add(_headBump);
+                    group.Children.Add(offset);
+                    rect.RenderTransform = group;
+                }
+                else
+                {
+                    rect.RenderTransform = offset;
+                }
+
                 _segments.Add(rect);
+                _segmentOffsets.Add(offset);
                 SnakeCanvas.Children.Insert(0, rect);
             }
+        }
+
+        /// <summary>Spiegelbilder für Segmente, die gerade durch eine Wand gehen.</summary>
+        private Rectangle EnsureGhost(int index)
+        {
+            while (_ghosts.Count <= index)
+            {
+                var offset = new TranslateTransform();
+                var rect = new Rectangle
+                {
+                    Width = CellSize - SegmentGap,
+                    Height = CellSize - SegmentGap,
+                    Visibility = Visibility.Collapsed,
+                    RenderTransform = offset
+                };
+
+                _ghosts.Add(rect);
+                _ghostOffsets.Add(offset);
+                SnakeCanvas.Children.Insert(0, rect);
+            }
+
+            return _ghosts[index];
         }
 
         /// <summary>
@@ -674,7 +1398,7 @@ namespace Snake_Spiel
 
             if (_state == ViewState.Running)
             {
-                _timer.Stop();
+                StopLoop();
                 _sounds.PauseMusic();
             }
 
@@ -702,7 +1426,7 @@ namespace Snake_Spiel
                 case ViewState.Running:
                     HideOverlay();
                     _sounds.ResumeMusic();
-                    _timer.Start();
+                    StartLoop();
                     break;
 
                 case ViewState.Paused:
@@ -853,6 +1577,16 @@ namespace Snake_Spiel
                     e.Handled = true;
                     return;
 
+                case Key.F3:
+                    ToggleDiagnostics();
+                    e.Handled = true;
+                    return;
+
+                case Key.F4:
+                    ToggleEffects();
+                    e.Handled = true;
+                    return;
+
                 case Key.D1:
                 case Key.NumPad1:
                     if (_state != ViewState.Running && _state != ViewState.Settings)
@@ -941,7 +1675,7 @@ namespace Snake_Spiel
 
         private void Window_Closed(object sender, EventArgs e)
         {
-            _timer.Stop();
+            StopLoop();
             _settings.Save();
             _sounds.Dispose();
         }

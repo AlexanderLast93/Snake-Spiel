@@ -65,6 +65,7 @@ namespace Snake_Spiel.Game
         private const int StartLength = 4;
 
         private readonly List<GridPoint> _snake = new();
+        private readonly List<GridPoint> _previousSnake = new();
         private readonly HashSet<GridPoint> _occupied = new();
         private readonly Queue<Direction> _pendingDirections = new();
         private readonly Random _random;
@@ -95,6 +96,15 @@ namespace Snake_Spiel.Game
         public IReadOnlyList<GridPoint> Snake => _snake;
 
         public GridPoint Head => _snake[0];
+
+        /// <summary>
+        /// Die Segmente, wie sie vor dem letzten Schritt lagen - dieselbe Reihenfolge
+        /// wie <see cref="Snake"/>. Damit kann die Darstellung jedes Segment zwischen
+        /// altem und neuem Feld gleiten lassen, statt es springen zu lassen. Nach dem
+        /// Fressen ist diese Liste um eins kürzer: Das neue Schwanzstück hat kein
+        /// "vorher", es bleibt einfach liegen, während der Rest weiterrückt.
+        /// </summary>
+        public IReadOnlyList<GridPoint> PreviousSnake => _previousSnake;
 
         public GridPoint Food { get; private set; }
 
@@ -153,6 +163,7 @@ namespace Snake_Spiel.Game
             }
 
             SpawnFood();
+            RememberPositions();
         }
 
         /// <summary>
@@ -192,6 +203,7 @@ namespace Snake_Spiel.Game
             }
 
             FoodRelocated = false;
+            RememberPositions();
 
             if (_pendingDirections.Count > 0)
             {
@@ -248,6 +260,12 @@ namespace Snake_Spiel.Game
 
             FoodAgeTicks = 0;
             return StepResult.Ate;
+        }
+
+        private void RememberPositions()
+        {
+            _previousSnake.Clear();
+            _previousSnake.AddRange(_snake);
         }
 
         /// <summary>

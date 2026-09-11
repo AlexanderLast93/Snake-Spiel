@@ -121,35 +121,50 @@
                 </Border>
             </StackPanel>
 
-            <!-- Spielfeld -->
-            <Border Grid.Row="2"
-                    x:Name="BoardFrame"
-                    Width="802"
-                    Height="642"
-                    CornerRadius="12"
-                    Background="#FF060B13"
-                    BorderBrush="#FF1B4258"
-                    BorderThickness="1">
-                <Border.Effect>
-                    <DropShadowEffect Color="{StaticResource AccentColor}"
-                                      BlurRadius="34"
-                                      ShadowDepth="0"
-                                      Opacity="0.32" />
-                </Border.Effect>
+            <!-- Spielfeld. Der Schein liegt auf einem eigenen, statischen Element hinter dem
+                 Rahmen: Säße er auf dem Rahmen selbst, müsste WPF bei jedem Bild das ganze
+                 Spielfeld samt Schlange neu weichzeichnen, weil sich der Inhalt ändert. -->
+            <Grid Grid.Row="2" x:Name="BoardShakeHost" Width="802" Height="642">
+                <Border x:Name="BoardGlow"
+                        CornerRadius="12"
+                        Background="#FF060B13">
+                    <Border.Effect>
+                        <DropShadowEffect x:Name="BoardGlowEffect"
+                                          Color="{StaticResource AccentColor}"
+                                          BlurRadius="34"
+                                          ShadowDepth="0"
+                                          Opacity="0.32" />
+                    </Border.Effect>
+                </Border>
 
+                <Border x:Name="BoardFrame"
+                        CornerRadius="12"
+                        Background="#FF060B13"
+                        BorderBrush="#FF1B4258"
+                        BorderThickness="1">
                 <Grid ClipToBounds="True">
                     <Canvas x:Name="GridCanvas" Width="800" Height="640" />
 
-                    <Canvas x:Name="FoodCanvas" Width="800" Height="640">
+                    <Canvas x:Name="FoodCanvas"
+                            Width="800"
+                            Height="640"
+                            UseLayoutRounding="False"
+                            SnapsToDevicePixels="False">
                         <Canvas.Effect>
-                            <DropShadowEffect Color="{StaticResource FoodColor}"
+                            <DropShadowEffect x:Name="FoodGlow"
+                                              Color="{StaticResource FoodColor}"
                                               BlurRadius="22"
                                               ShadowDepth="0"
                                               Opacity="0.95" />
                         </Canvas.Effect>
                     </Canvas>
 
-                    <Canvas x:Name="SnakeCanvas" Width="800" Height="640">
+                    <!-- Ohne Pixelrundung: 4,85 px pro Bild sollen 4,85 px bleiben, nicht 5-5-4-5. -->
+                    <Canvas x:Name="SnakeCanvas"
+                            Width="800"
+                            Height="640"
+                            UseLayoutRounding="False"
+                            SnapsToDevicePixels="False">
                         <Canvas.Effect>
                             <DropShadowEffect x:Name="SnakeGlow"
                                               Color="{StaticResource AccentColor}"
@@ -158,6 +173,14 @@
                                               Opacity="0.8" />
                         </Canvas.Effect>
                     </Canvas>
+
+                    <!-- Funken und Ringe: Fressen und Tod. Kein Effekt darauf - die Farben leuchten von selbst. -->
+                    <Canvas x:Name="ParticleCanvas"
+                            Width="800"
+                            Height="640"
+                            IsHitTestVisible="False"
+                            UseLayoutRounding="False"
+                            SnapsToDevicePixels="False" />
 
                     <!-- Kurze Einblendung, wenn das Spiel in den Hardcore-Zustand kippt -->
                     <StackPanel x:Name="HardcoreBanner"
@@ -408,8 +431,23 @@
                             </StackPanel>
                         </StackPanel>
                     </Grid>
+
+                    <!-- Messanzeige, F3 -->
+                    <TextBlock x:Name="DiagText"
+                               VerticalAlignment="Top"
+                               HorizontalAlignment="Left"
+                               Margin="10,8,0,0"
+                               FontFamily="Consolas"
+                               FontSize="12"
+                               Foreground="#FFB8F4FF"
+                               Background="#B0050A12"
+                               Padding="8,5"
+                               IsHitTestVisible="False"
+                               Visibility="Collapsed"
+                               Text="" />
                 </Grid>
-            </Border>
+                </Border>
+            </Grid>
 
             <!-- Fußzeile mit Tastenbelegung -->
             <Grid Grid.Row="3" Margin="42,14,42,16">
