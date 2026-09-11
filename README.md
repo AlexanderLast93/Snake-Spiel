@@ -1,10 +1,38 @@
 # Snake
 
-Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.0.0.
+Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.2.0.
 
 Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Es gibt drei
 Schwierigkeitsgrade, einen lokal gespeicherten Rekord je Grad und Musik, die das Programm
 beim Start selbst berechnet — es wird keine einzige Audiodatei mitgeliefert.
+
+Alle drei Grade beschleunigen bis zum selben Endtempo von 42 Millisekunden pro Zug. Der
+Unterschied ist allein die Anlaufstrecke: **Langsam** braucht 130 Kugeln dorthin, **Normal** 56,
+**Schnell** 27. Ein Grad ist also kein Deckel, sondern die Frage, wie viel Zeit man zum
+Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, grün, gelb.
+
+Wer auf **Schnell** lange genug überlebt, wird feststellen, dass das Spiel noch etwas vorhat.
+
+<details>
+<summary>Was dann passiert (Spoiler — lieber selbst herausfinden)</summary>
+
+Ab Level 10, also nach 27 Kugeln, kippt der Lauf in den **Hardcore-Zustand**: Die Schlange wird
+orange, das Futter verfällt nach drei Sekunden und taucht woanders auf, die Musik wechselt.
+
+Ab Level 15, nach 42 Kugeln, wird es **Unmöglich** — rote Schlange, anderthalb Sekunden
+Futterzeit und ein Soundtrack, der keine Gefangenen macht. Das Tempo bleibt dabei bewusst
+gleich: Bei 24 Zügen pro Sekunde entscheidet sonst die Reaktionszeit statt des Könnens.
+
+</details>
+
+## Herunterladen und spielen
+
+Fertiges Programm: **[Releases](../../releases/latest)** öffnen, `Snake.exe` herunterladen,
+Doppelklick. Das war es — keine Installation, kein .NET nötig, läuft auf jedem 64-Bit-Windows.
+
+Beim ersten Start zeigt Windows eine blaue SmartScreen-Warnung, weil die Datei nicht mit einem
+gekauften Zertifikat signiert ist. Über „Weitere Informationen" → „Trotzdem ausführen" startet
+das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 
 ## Steuerung
 
@@ -16,6 +44,7 @@ beim Start selbst berechnet — es wird keine einzige Audiodatei mitgeliefert.
 | Esc | zurück ins Menü |
 | M | Ton stumm schalten |
 | 1 / 2 / 3 | Schwierigkeitsgrad wählen |
+| Zahnrad oben rechts | Lautstärke für Musik und Effekte einstellen |
 
 ## Aufbau des Projekts
 
@@ -24,6 +53,7 @@ beim Start selbst berechnet — es wird keine einzige Audiodatei mitgeliefert.
 | `Game/GameEngine.cs` | Spielregeln: Bewegung, offene Wände, Kollision, Futter, Punkte — ohne jeden Bezug zur Oberfläche |
 | `Game/Difficulty.cs` | Die drei Schwierigkeitsgrade mit Tempo und Steigerung |
 | `Game/HighScoreService.cs` | Rekord je Grad, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
+| `Game/GameSettings.cs` | Lautstärken, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
 | `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Echo, WAV-Ausgabe |
 | `Game/SoundBank.cs` | Die konkreten Klänge und die drei Musikstücke |
 | `Game/SoundEngine.cs` | Wiedergabe über `MediaPlayer`, Musikschleife, Stummschaltung |
@@ -51,7 +81,7 @@ In Visual Studio genügt F5.
 Doppelklick auf `veroeffentlichen.cmd`. Das Skript legt
 
 ```
-release\v1.0.0\Snake.exe
+release\v1.2.0\Snake.exe
 ```
 
 an: eine einzige Datei mit eingebauter .NET-Laufzeit. Sie startet auf jedem 64-Bit-Windows,
@@ -68,7 +98,23 @@ mit einem gekauften Codesignatur-Zertifikat.
 
 Die Versionsnummer steht an einer einzigen Stelle: in `Snake Spiel.csproj` unter `Version`,
 `AssemblyVersion` und `FileVersion`. Das Fenster liest sie zur Laufzeit aus und zeigt sie oben
-links an. Für eine neue Fassung dort die Nummer erhöhen, danach neu veröffentlichen.
+links an, und `veroeffentlichen.cmd` holt sich von dort den Namen des Ausgabeordners.
+Für eine neue Fassung dort die Nummer erhöhen, danach neu veröffentlichen.
+
+## Versionsverwaltung
+
+Beim ersten Mal genügt ein Doppelklick auf `git-repo-anlegen.cmd`. Das Skript legt das
+Repository an, macht den ersten Commit, setzt den Tag `v1.0.0` und bietet danach an, alles
+zu GitHub hochzuladen. Ohne Eingabe einer URL bleibt alles lokal.
+
+Von Hand wäre das:
+
+```
+git init -b main
+git add -A
+git commit -m "Snake 1.0.0"
+git tag -a v1.0.0 -m "Version 1.0.0"
+```
 
 ## Lizenz
 

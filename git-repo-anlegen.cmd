@@ -2,15 +2,18 @@
 rem ---------------------------------------------------------------------
 rem  Legt fuer Snake ein Git-Repository an, macht den ersten Commit,
 rem  setzt den Tag v1.0.0 und laedt alles nach GitHub hoch:
-rem  https://github.com/Nierrowh/Snake-Spiel
+rem  https://github.com/AlexanderLast93/Snake-Spiel
+rem
+rem  Das leere Repository muss auf GitHub bereits angelegt sein.
 rem ---------------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
 
-set "REMOTE=https://github.com/Nierrowh/Snake-Spiel.git"
-rem GitHub-Adresse ohne private Mailadresse - das Konto hat Mailschutz aktiv
-set "AUTORMAIL=213492918+Nierrowh@users.noreply.github.com"
+set "REMOTE=https://github.com/AlexanderLast93/Snake-Spiel.git"
+rem GitHub-Adresse statt privater Mail - das Konto hat Mailschutz aktiv
+set "AUTORMAIL=199250757+AlexanderLast93@users.noreply.github.com"
 set "AUTORNAME=Alexander Last"
+set "TAGTEXT=Version 1.0.0 - erste veroeffentlichte Fassung"
 
 where git >nul 2>&1
 if errorlevel 1 (
@@ -22,7 +25,7 @@ if errorlevel 1 (
 
 if exist ".git" (
     echo Ein Repository ist bereits vorhanden - Anlegen wird uebersprungen.
-    goto :hochladen
+    goto :identitaet
 )
 
 echo.
@@ -32,11 +35,8 @@ echo.
 git init -b main
 if errorlevel 1 goto :fehler
 
-rem Identitaet nur fuer dieses Projekt, damit die private Mailadresse
-rem nicht in den oeffentlichen Commit wandert
 git config user.name "%AUTORNAME%"
 git config user.email "%AUTORMAIL%"
-
 rem Windows-Projekt: Zeilenenden nicht umschreiben, sonst meldet Git staendig Aenderungen
 git config core.autocrlf false
 
@@ -50,42 +50,56 @@ git commit ^
  -m "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 if errorlevel 1 goto :fehler
 
-git tag -a v1.0.0 -m "Version 1.0.0 - erste veroeffentlichte Fassung"
+git tag -a v1.0.0 -m "%TAGTEXT%"
 if errorlevel 1 goto :fehler
+goto :hochladen
 
-echo.
-git --no-pager log --oneline --decorate
-echo.
+:identitaet
+rem Der Commit stammt eventuell noch aus einem Lauf mit anderer Kontoadresse.
+rem Dann wuerde GitHub den Beitrag dem falschen Konto zuordnen - also korrigieren.
+git config user.name "%AUTORNAME%"
+git config user.email "%AUTORMAIL%"
+git config core.autocrlf false
+
+git log -1 --format=%%ae > "%TEMP%\snake_autor.txt" 2>nul
+findstr /i /c:"%AUTORMAIL%" "%TEMP%\snake_autor.txt" >nul
+if errorlevel 1 (
+    echo Der vorhandene Commit traegt eine andere Adresse - er wird auf
+    echo %AUTORMAIL% umgeschrieben.
+    git commit --amend --reset-author --no-edit
+    if errorlevel 1 goto :fehler
+    git tag -f -a v1.0.0 -m "%TAGTEXT%"
+    if errorlevel 1 goto :fehler
+)
+del "%TEMP%\snake_autor.txt" >nul 2>&1
 
 :hochladen
 echo.
 echo === Hochladen zu GitHub ===
 echo.
-echo Beim ersten Mal oeffnet Git ein Fenster zur Anmeldung bei GitHub.
-echo Dort anmelden - danach laeuft es von allein.
+git --no-pager log -1 --format="Commit: %%h  Autor: %%an ^<%%ae^>"
 echo.
 
 git remote get-url origin >nul 2>&1
 if errorlevel 1 (
     git remote add origin "%REMOTE%"
 ) else (
-    echo Eine Gegenstelle ist bereits eingetragen:
-    git remote get-url origin
+    git remote set-url origin "%REMOTE%"
 )
 
-git push -u origin main --tags
+git push -u origin main --tags --force-with-lease
 if errorlevel 1 (
     echo.
-    echo [HINWEIS] Das Hochladen ist fehlgeschlagen - meist fehlt die Anmeldung.
-    echo Der Commit und der Tag liegen aber sicher auf dieser Platte.
-    echo Erneut versuchen mit:  git push -u origin main --tags
+    echo [HINWEIS] Das Hochladen ist fehlgeschlagen.
+    echo  - Steht das leere Repository schon unter %REMOTE% ?
+    echo  - Ist Git auf diesem PC beim Konto AlexanderLast93 angemeldet?
+    echo Commit und Tag liegen unabhaengig davon sicher auf dieser Platte.
     goto :ende
 )
 
 echo.
 echo === Fertig ===
-echo Das Projekt liegt jetzt hier:
-echo    https://github.com/Nierrowh/Snake-Spiel
+echo    https://github.com/AlexanderLast93/Snake-Spiel
 echo.
 echo Als Naechstes: veroeffentlichen.cmd starten, dann auf GitHub unter
 echo "Releases" das Release zum Tag v1.0.0 anlegen und Snake.exe anhaengen.

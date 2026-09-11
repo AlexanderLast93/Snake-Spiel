@@ -64,6 +64,11 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="&#x2699;"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            FontSize="15"
+                            ToolTip="Einstellungen"
+                            Click="SettingsButton_Click" />
                     <Button Content="&#x2013;"
                             Style="{StaticResource CaptionButtonStyle}"
                             ToolTip="Minimieren"
@@ -154,6 +159,36 @@
                         </Canvas.Effect>
                     </Canvas>
 
+                    <!-- Kurze Einblendung, wenn das Spiel in den Hardcore-Zustand kippt -->
+                    <StackPanel x:Name="HardcoreBanner"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Opacity="0"
+                                IsHitTestVisible="False">
+                        <TextBlock x:Name="HardcoreBannerTitle"
+                                   Text="HARDCORE"
+                                   FontFamily="Segoe UI"
+                                   FontSize="64"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFF8A3D"
+                                   HorizontalAlignment="Center">
+                            <TextBlock.Effect>
+                                <DropShadowEffect x:Name="HardcoreBannerGlow"
+                                                  Color="#FFFF6A1F"
+                                                  BlurRadius="40"
+                                                  ShadowDepth="0"
+                                                  Opacity="0.9" />
+                            </TextBlock.Effect>
+                        </TextBlock>
+                        <TextBlock x:Name="HardcoreBannerText"
+                                   Text="Das Futter bleibt nur noch drei Sekunden liegen"
+                                   FontFamily="Segoe UI"
+                                   FontSize="15"
+                                   Foreground="#FFFFC79B"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+
                     <!-- Overlay für Menü, Pause und Spielende -->
                     <Grid x:Name="Overlay" Background="#EE050A12">
 
@@ -173,7 +208,7 @@
                                         Tag="easy"
                                         Click="DifficultyButton_Click">
                                     <StackPanel>
-                                        <TextBlock Text="1 · LEICHT"
+                                        <TextBlock Text="1 · LANGSAM"
                                                    FontSize="15"
                                                    FontWeight="Bold"
                                                    HorizontalAlignment="Center" />
@@ -229,6 +264,78 @@
                             <TextBlock Text="Enter startet den zuletzt gewählten Modus"
                                        Style="{StaticResource OverlayHintStyle}"
                                        Margin="0,8,0,0" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="SettingsPanel"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Center"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="EINSTELLUNGEN"
+                                       Style="{StaticResource OverlayTitleStyle}"
+                                       FontSize="38" />
+
+                            <Border Background="{StaticResource PanelBrush}"
+                                    BorderBrush="{StaticResource PanelBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="12"
+                                    Padding="28,22"
+                                    Margin="0,26,0,0">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,18">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Musik" Style="{StaticResource SettingsLabelStyle}" />
+                                        <Slider Grid.Column="1"
+                                                x:Name="MusicVolumeSlider"
+                                                Style="{StaticResource NeonSliderStyle}"
+                                                ValueChanged="MusicVolumeSlider_ValueChanged" />
+                                        <TextBlock Grid.Column="2"
+                                                   x:Name="MusicVolumeText"
+                                                   Text="45 %"
+                                                   Style="{StaticResource SettingsValueStyle}"
+                                                   Margin="14,0,0,0" />
+                                    </Grid>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="96" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Effekte" Style="{StaticResource SettingsLabelStyle}" />
+                                        <Slider Grid.Column="1"
+                                                x:Name="EffectVolumeSlider"
+                                                Style="{StaticResource NeonSliderStyle}"
+                                                ValueChanged="EffectVolumeSlider_ValueChanged" />
+                                        <TextBlock Grid.Column="2"
+                                                   x:Name="EffectVolumeText"
+                                                   Text="90 %"
+                                                   Style="{StaticResource SettingsValueStyle}"
+                                                   Margin="14,0,0,0" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,24,0,0">
+                                <Button x:Name="MuteButton"
+                                        Content="Ton stumm schalten"
+                                        Style="{StaticResource NeonButtonStyle}"
+                                        Margin="8,0"
+                                        Click="MuteButton_Click" />
+                                <Button Content="Zurück (Esc)"
+                                        Style="{StaticResource NeonButtonStyle}"
+                                        Margin="8,0"
+                                        Click="CloseSettingsButton_Click" />
+                            </StackPanel>
+
+                            <TextBlock Text="Die Einstellungen bleiben für das nächste Mal gespeichert."
+                                       Style="{StaticResource OverlayHintStyle}"
+                                       Margin="0,20,0,0" />
                         </StackPanel>
 
                         <StackPanel x:Name="PausePanel"

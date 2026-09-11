@@ -23,12 +23,30 @@ namespace Snake_Spiel
         private const double CellSize = 32.0;
         private const double SegmentGap = 3.0;
 
-        private static readonly Color HeadColor = Color.FromRgb(0x9B, 0xFF, 0xF0);
-        private static readonly Color TailColor = Color.FromRgb(0x0E, 0x6E, 0x9E);
-        private static readonly Color DeadHeadColor = Color.FromRgb(0xFF, 0xA5, 0x6E);
-        private static readonly Color DeadTailColor = Color.FromRgb(0x8B, 0x1E, 0x3F);
-        private static readonly Color GlowAccent = Color.FromRgb(0x2D, 0xE2, 0xD5);
-        private static readonly Color GlowDanger = Color.FromRgb(0xFF, 0x5C, 0x6E);
+        /// <summary>Wie lange das Futter in den Eskalationsstufen liegen bleibt.</summary>
+        private const double HardcoreFoodSeconds = 3.0;
+
+        private const double ImpossibleFoodSeconds = 1.5;
+
+        // Jeder Schwierigkeitsgrad hat seine eigene Farbe. Der Tod ist grau, damit er
+        // sich von allen Spielfarben abhebt - besonders von Orange im Hardcore-Zustand.
+        private static readonly SnakePalette PaletteSlow = new(
+            Color.FromRgb(0x8C, 0xD8, 0xFF), Color.FromRgb(0x0B, 0x3F, 0x7A), Color.FromRgb(0x38, 0xBD, 0xF8));
+
+        private static readonly SnakePalette PaletteNormal = new(
+            Color.FromRgb(0xB6, 0xFF, 0xC4), Color.FromRgb(0x0C, 0x6B, 0x38), Color.FromRgb(0x4A, 0xDE, 0x80));
+
+        private static readonly SnakePalette PaletteFast = new(
+            Color.FromRgb(0xFF, 0xF3, 0x9B), Color.FromRgb(0x8A, 0x63, 0x00), Color.FromRgb(0xFA, 0xE0, 0x4C));
+
+        private static readonly SnakePalette PaletteHardcore = new(
+            Color.FromRgb(0xFF, 0xC4, 0x7A), Color.FromRgb(0xB0, 0x3A, 0x02), Color.FromRgb(0xFB, 0x8A, 0x2E));
+
+        private static readonly SnakePalette PaletteImpossible = new(
+            Color.FromRgb(0xFF, 0x9A, 0x8F), Color.FromRgb(0x7E, 0x07, 0x07), Color.FromRgb(0xFF, 0x3B, 0x2F));
+
+        private static readonly SnakePalette PaletteDead = new(
+            Color.FromRgb(0xB4, 0xBE, 0xC8), Color.FromRgb(0x33, 0x3B, 0x45), Color.FromRgb(0x6B, 0x7A, 0x8A));
 
         // Menü deckt fast alles ab, Pause und Spielende lassen das Feld durchscheinen.
         private static readonly Brush OverlayStrong = CreateOverlayBrush(0xEE);
@@ -37,23 +55,30 @@ namespace Snake_Spiel
 
         private readonly GameEngine _engine = new(Columns, Rows);
         private readonly HighScoreService _highScores = new();
-        private readonly SoundEngine _sounds = new();
+        private readonly GameSettings _settings = new();
+        private readonly SoundEngine _sounds;
         private readonly DispatcherTimer _timer;
         private readonly List<Rectangle> _segments = new();
         private readonly Ellipse[] _eyes = new Ellipse[2];
 
         private Ellipse _food = null!;
         private Brush[] _bodyBrushes = Array.Empty<Brush>();
-        private bool _bodyBrushesDead;
+        private SnakePalette _brushPalette;
         private Difficulty _difficulty = Difficulty.Normal;
         private ViewState _state = ViewState.Menu;
+        private ViewState _stateBeforeSettings = ViewState.Menu;
         private int _lastLevel = 1;
         private int _recordAtStart;
         private bool _recordAnnounced;
+        private EscalationStage _stage = EscalationStage.Normal;
+        private bool _suppressSliderEvents;
+        private DateTime _lastEffectPreview = DateTime.MinValue;
 
         public MainWindow()
         {
             InitializeComponent();
+
+            _sounds = new SoundEngine(_settings);
 
             _timer = new DispatcherTimer(DispatcherPriority.Render)
             {
@@ -68,6 +93,7 @@ namespace Snake_Spiel
             ShowVersion();
 
             _sounds.StatusChanged += (_, _) => UpdateSoundStatus();
+            LoadSettingsIntoControls();
             UpdateSoundStatus();
             ShowMenu();
         }
@@ -87,8 +113,36 @@ namespace Snake_Spiel
             Menu,
             Running,
             Paused,
-            GameOver
+            GameOver,
+            Settings
         }
+
+        /// <summary>Farbsatz der Schlange: heller Kopf, dunkler Schwanz, passender Schein.</summary>
+        private readonly record struct SnakePalette(Color Head, Color Tail, Color Glow);
+
+        /// <summary>
+        /// Farbsatz zum aktuellen Zustand: der gewählte Grad bestimmt die Grundfarbe,
+        /// die Eskalationsstufen überschreiben sie mit Orange und Rot.
+        /// </summary>
+        private SnakePalette CurrentPalette => _stage switch
+        {
+            EscalationStage.Hardcore => PaletteHardcore,
+            EscalationStage.Impossible => PaletteImpossible,
+            _ => _difficulty.Key switch
+            {
+                "easy" => PaletteSlow,
+                "hard" => PaletteFast,
+                _ => PaletteNormal
+            }
+        };
+
+        /// <summary>Name des Zustands für Anzeige und Spielende.</summary>
+        private string CurrentModeName => _stage switch
+        {
+            EscalationStage.Hardcore => "HARDCORE",
+            EscalationStage.Impossible => "UNMÖGLICH",
+            _ => _difficulty.DisplayName
+        };
 
         // ------------------------------------------------------------------
         // Aufbau der statischen Grafik
@@ -192,19 +246,17 @@ namespace Snake_Spiel
             _state = ViewState.Menu;
 
             _engine.Reset();
+            _engine.FoodLifetimeTicks = 0;
             _lastLevel = 1;
-            RefreshBodyBrushes(_engine.Snake.Count, dead: false);
-            SnakeGlow.Color = GlowAccent;
+            _stage = EscalationStage.Normal;
+            ApplyPalette();
 
             Render();
             UpdateHud();
             UpdateMenuRecords();
 
             Overlay.Background = OverlayStrong;
-            MenuPanel.Visibility = Visibility.Visible;
-            PausePanel.Visibility = Visibility.Collapsed;
-            GameOverPanel.Visibility = Visibility.Collapsed;
-            Overlay.Visibility = Visibility.Visible;
+            ShowOnlyPanel(MenuPanel);
         }
 
         private void StartGame(Difficulty difficulty)
@@ -213,18 +265,17 @@ namespace Snake_Spiel
             _state = ViewState.Running;
             _lastLevel = 1;
 
+            _stage = EscalationStage.Normal;
             _engine.Reset();
-            RefreshBodyBrushes(_engine.Snake.Count, dead: false);
-            SnakeGlow.Color = GlowAccent;
+            _engine.FoodLifetimeTicks = 0;
+            ApplyPalette();
+            HardcoreBanner.Opacity = 0;
 
             _recordAtStart = _highScores.GetHighScore(difficulty.Key);
             _recordAnnounced = false;
 
             ModeText.Text = difficulty.DisplayName;
-            Overlay.Visibility = Visibility.Collapsed;
-            MenuPanel.Visibility = Visibility.Collapsed;
-            PausePanel.Visibility = Visibility.Collapsed;
-            GameOverPanel.Visibility = Visibility.Collapsed;
+            HideOverlay();
 
             UpdateHud();
             Render();
@@ -243,19 +294,110 @@ namespace Snake_Spiel
                 _sounds.PauseMusic();
                 _state = ViewState.Paused;
                 Overlay.Background = OverlaySoft;
-                PausePanel.Visibility = Visibility.Visible;
-                MenuPanel.Visibility = Visibility.Collapsed;
-                GameOverPanel.Visibility = Visibility.Collapsed;
-                Overlay.Visibility = Visibility.Visible;
+                ShowOnlyPanel(PausePanel);
             }
             else if (_state == ViewState.Paused)
             {
                 _state = ViewState.Running;
-                Overlay.Visibility = Visibility.Collapsed;
-                PausePanel.Visibility = Visibility.Collapsed;
+                HideOverlay();
                 _sounds.ResumeMusic();
                 _timer.Start();
             }
+        }
+
+        /// <summary>Zeigt genau eine Tafel im Overlay und blendet das Overlay ein.</summary>
+        private void ShowOnlyPanel(UIElement panel)
+        {
+            MenuPanel.Visibility = ReferenceEquals(panel, MenuPanel) ? Visibility.Visible : Visibility.Collapsed;
+            PausePanel.Visibility = ReferenceEquals(panel, PausePanel) ? Visibility.Visible : Visibility.Collapsed;
+            GameOverPanel.Visibility = ReferenceEquals(panel, GameOverPanel) ? Visibility.Visible : Visibility.Collapsed;
+            SettingsPanel.Visibility = ReferenceEquals(panel, SettingsPanel) ? Visibility.Visible : Visibility.Collapsed;
+            Overlay.Visibility = Visibility.Visible;
+        }
+
+        private void HideOverlay()
+        {
+            Overlay.Visibility = Visibility.Collapsed;
+            MenuPanel.Visibility = Visibility.Collapsed;
+            PausePanel.Visibility = Visibility.Collapsed;
+            GameOverPanel.Visibility = Visibility.Collapsed;
+            SettingsPanel.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>Färbt Schlange, Schein und Punktestand passend zum Zustand ein.</summary>
+        private void ApplyPalette()
+        {
+            SnakePalette palette = CurrentPalette;
+            RefreshBodyBrushes(_engine.Snake.Count, palette);
+            SnakeGlow.Color = palette.Glow;
+
+            var accent = new SolidColorBrush(palette.Glow);
+            accent.Freeze();
+            ScoreText.Foreground = accent;
+        }
+
+        /// <summary>
+        /// Das Spiel kippt eine Stufe höher: andere Farbe, kürzere Futterzeit,
+        /// eigene Musik. Zurück geht es nicht mehr.
+        /// </summary>
+        private void EnterStage(EscalationStage stage)
+        {
+            _stage = stage;
+
+            ApplyPalette();
+            UpdateFoodLifetime();
+            ModeText.Text = CurrentModeName;
+
+            if (stage == EscalationStage.Impossible)
+            {
+                _sounds.PlayEffect(SoundEngine.EffectImpossible);
+                _sounds.StartMusic(SoundBank.ImpossibleKey);
+
+                HardcoreBannerTitle.Text = "UNMÖGLICH";
+                HardcoreBannerTitle.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x5B, 0x4C));
+                HardcoreBannerGlow.Color = Color.FromRgb(0xFF, 0x2A, 0x1C);
+                HardcoreBannerText.Text = "Das Futter ist nach anderthalb Sekunden wieder weg";
+            }
+            else
+            {
+                _sounds.PlayEffect(SoundEngine.EffectHardcore);
+                _sounds.StartMusic(SoundBank.HardcoreKey);
+
+                HardcoreBannerTitle.Text = "HARDCORE";
+                HardcoreBannerTitle.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x8A, 0x3D));
+                HardcoreBannerGlow.Color = Color.FromRgb(0xFF, 0x6A, 0x1F);
+                HardcoreBannerText.Text = "Das Futter bleibt nur noch drei Sekunden liegen";
+            }
+
+            var fade = new DoubleAnimationUsingKeyFrames();
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(220))));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1700))));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2400))));
+            HardcoreBanner.BeginAnimation(OpacityProperty, fade);
+        }
+
+        /// <summary>
+        /// Rechnet die gewünschten drei Sekunden in Spielschritte um. Das Tempo ändert
+        /// sich mit jedem Level, also muss die Umrechnung mitwandern.
+        /// </summary>
+        private void UpdateFoodLifetime()
+        {
+            double seconds = _stage switch
+            {
+                EscalationStage.Hardcore => HardcoreFoodSeconds,
+                EscalationStage.Impossible => ImpossibleFoodSeconds,
+                _ => 0.0
+            };
+
+            if (seconds <= 0.0)
+            {
+                _engine.FoodLifetimeTicks = 0;
+                return;
+            }
+
+            double intervalMs = _difficulty.IntervalFor(_engine.FoodEaten);
+            _engine.FoodLifetimeTicks = Math.Max(4, (int)Math.Round(seconds * 1000.0 / intervalMs));
         }
 
         private void OnTick(object? sender, EventArgs e)
@@ -278,11 +420,21 @@ namespace Snake_Spiel
                     if (level > _lastLevel)
                     {
                         _lastLevel = level;
-                        _sounds.PlayEffect(SoundEngine.EffectLevelUp);
+
+                        EscalationStage stage = _difficulty.StageFor(_engine.FoodEaten);
+                        if (stage > _stage)
+                        {
+                            EnterStage(stage);
+                        }
+                        else
+                        {
+                            _sounds.PlayEffect(SoundEngine.EffectLevelUp);
+                        }
                     }
 
                     _timer.Interval = TimeSpan.FromMilliseconds(_difficulty.IntervalFor(_engine.FoodEaten));
-                    RefreshBodyBrushes(_engine.Snake.Count, dead: false);
+                    UpdateFoodLifetime();
+                    RefreshBodyBrushes(_engine.Snake.Count, CurrentPalette);
                     UpdateHud();
                     break;
 
@@ -308,24 +460,22 @@ namespace Snake_Spiel
 
             bool isRecord = _highScores.TrySubmit(_difficulty.Key, _engine.Score);
 
-            RefreshBodyBrushes(_engine.Snake.Count, dead: true);
-            SnakeGlow.Color = GlowDanger;
+            RefreshBodyBrushes(_engine.Snake.Count, PaletteDead);
+            SnakeGlow.Color = PaletteDead.Glow;
             Render();
             UpdateHud();
 
             GameOverScoreText.Text = $"{_engine.Score} Punkte";
             NewRecordText.Visibility = isRecord ? Visibility.Visible : Visibility.Collapsed;
 
-            string lengthInfo = $"Länge {_engine.Snake.Count} · Level {_difficulty.LevelFor(_engine.FoodEaten)} · Modus {_difficulty.DisplayName}";
+            string modeName = CurrentModeName;
+            string lengthInfo = $"Länge {_engine.Snake.Count} · Level {_difficulty.LevelFor(_engine.FoodEaten)} · Modus {modeName}";
             GameOverDetailText.Text = won
                 ? "Spielfeld komplett gefüllt - mehr geht nicht.\n" + lengthInfo
                 : lengthInfo + $"\nRekord in diesem Modus: {_highScores.GetHighScore(_difficulty.Key)}";
 
             Overlay.Background = OverlayEnd;
-            MenuPanel.Visibility = Visibility.Collapsed;
-            PausePanel.Visibility = Visibility.Collapsed;
-            GameOverPanel.Visibility = Visibility.Visible;
-            Overlay.Visibility = Visibility.Visible;
+            ShowOnlyPanel(GameOverPanel);
         }
 
         // ------------------------------------------------------------------
@@ -367,6 +517,12 @@ namespace Snake_Spiel
             if (_engine.HasFood)
             {
                 _food.Visibility = Visibility.Visible;
+
+                // Im Hardcore-Zustand zeigt die Deckkraft, wie lange das Futter noch liegt.
+                _food.Opacity = _engine.FoodLifetimeTicks > 0
+                    ? 0.30 + (0.70 * _engine.FoodFreshness)
+                    : 1.0;
+
                 Canvas.SetLeft(_food, (_engine.Food.X * CellSize) + ((CellSize - _food.Width) / 2.0));
                 Canvas.SetTop(_food, (_engine.Food.Y * CellSize) + ((CellSize - _food.Height) / 2.0));
             }
@@ -424,15 +580,15 @@ namespace Snake_Spiel
         /// Farbverlauf vom hellen Kopf zum dunklen Schwanz. Die Pinsel hängen nur an
         /// der Länge, werden also nur beim Wachsen neu gebaut - nicht in jedem Bild.
         /// </summary>
-        private void RefreshBodyBrushes(int length, bool dead)
+        private void RefreshBodyBrushes(int length, SnakePalette palette)
         {
-            if (_bodyBrushes.Length == length && _bodyBrushesDead == dead)
+            if (_bodyBrushes.Length == length && _brushPalette == palette)
             {
                 return;
             }
 
-            Color head = dead ? DeadHeadColor : HeadColor;
-            Color tail = dead ? DeadTailColor : TailColor;
+            Color head = palette.Head;
+            Color tail = palette.Tail;
 
             var brushes = new Brush[Math.Max(1, length)];
             for (int i = 0; i < brushes.Length; i++)
@@ -444,7 +600,7 @@ namespace Snake_Spiel
             }
 
             _bodyBrushes = brushes;
-            _bodyBrushesDead = dead;
+            _brushPalette = palette;
         }
 
         private static Brush CreateOverlayBrush(byte alpha)
@@ -471,7 +627,7 @@ namespace Snake_Spiel
             HighScoreText.Text = (ahead ? _engine.Score : record).ToString();
             HighScoreText.Foreground = (Brush)FindResource(ahead ? "AccentBrush" : "TextBrush");
             LevelText.Text = _difficulty.LevelFor(_engine.FoodEaten).ToString();
-            ModeText.Text = _difficulty.DisplayName;
+            ModeText.Text = CurrentModeName;
         }
 
         private void UpdateMenuRecords()
@@ -482,7 +638,128 @@ namespace Snake_Spiel
                 $"schnell {_highScores.GetHighScore(Difficulty.Hard.Key)}";
         }
 
-        private void UpdateSoundStatus() => SoundStatusText.Text = _sounds.StatusText;
+        private void UpdateSoundStatus()
+        {
+            SoundStatusText.Text = _sounds.StatusText;
+            UpdateMuteButton();
+        }
+
+        private void UpdateMuteButton()
+        {
+            if (MuteButton != null)
+            {
+                MuteButton.Content = _sounds.IsMuted ? "Ton einschalten" : "Ton stumm schalten";
+            }
+        }
+
+        /// <summary>Überträgt die gespeicherten Lautstärken auf die Regler.</summary>
+        private void LoadSettingsIntoControls()
+        {
+            _suppressSliderEvents = true;
+            MusicVolumeSlider.Value = Math.Round(_settings.MusicVolume * 100.0);
+            EffectVolumeSlider.Value = Math.Round(_settings.EffectVolume * 100.0);
+            _suppressSliderEvents = false;
+
+            MusicVolumeText.Text = $"{(int)Math.Round(_settings.MusicVolume * 100.0)} %";
+            EffectVolumeText.Text = $"{(int)Math.Round(_settings.EffectVolume * 100.0)} %";
+            UpdateMuteButton();
+        }
+
+        private void OpenSettings()
+        {
+            if (_state == ViewState.Settings)
+            {
+                return;
+            }
+
+            if (_state == ViewState.Running)
+            {
+                _timer.Stop();
+                _sounds.PauseMusic();
+            }
+
+            _stateBeforeSettings = _state;
+            _state = ViewState.Settings;
+
+            LoadSettingsIntoControls();
+            Overlay.Background = OverlaySoft;
+            ShowOnlyPanel(SettingsPanel);
+        }
+
+        /// <summary>Schließt die Einstellungen und kehrt dahin zurück, wo man herkam.</summary>
+        private void CloseSettings()
+        {
+            if (_state != ViewState.Settings)
+            {
+                return;
+            }
+
+            _settings.Save();
+            _state = _stateBeforeSettings;
+
+            switch (_state)
+            {
+                case ViewState.Running:
+                    HideOverlay();
+                    _sounds.ResumeMusic();
+                    _timer.Start();
+                    break;
+
+                case ViewState.Paused:
+                    Overlay.Background = OverlaySoft;
+                    ShowOnlyPanel(PausePanel);
+                    break;
+
+                case ViewState.GameOver:
+                    Overlay.Background = OverlayEnd;
+                    ShowOnlyPanel(GameOverPanel);
+                    break;
+
+                default:
+                    ShowMenu();
+                    break;
+            }
+        }
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e) => OpenSettings();
+
+        private void CloseSettingsButton_Click(object sender, RoutedEventArgs e) => CloseSettings();
+
+        private void MuteButton_Click(object sender, RoutedEventArgs e)
+        {
+            _sounds.SetMuted(!_sounds.IsMuted);
+            UpdateMuteButton();
+        }
+
+        private void MusicVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressSliderEvents || MusicVolumeText == null)
+            {
+                return;
+            }
+
+            _sounds.SetMusicVolume(e.NewValue / 100.0);
+            MusicVolumeText.Text = $"{(int)Math.Round(e.NewValue)} %";
+        }
+
+        private void EffectVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressSliderEvents || EffectVolumeText == null)
+            {
+                return;
+            }
+
+            _sounds.SetEffectVolume(e.NewValue / 100.0);
+            EffectVolumeText.Text = $"{(int)Math.Round(e.NewValue)} %";
+
+            // Kurze Hörprobe, aber nicht bei jedem Pixel Mausbewegung.
+            DateTime now = DateTime.UtcNow;
+            if (now - _lastEffectPreview > TimeSpan.FromMilliseconds(280))
+            {
+                _lastEffectPreview = now;
+                _sounds.PreviewEffect();
+            }
+        }
 
         // ------------------------------------------------------------------
         // Eingaben
@@ -517,6 +794,12 @@ namespace Snake_Spiel
                     return;
 
                 case Key.Space:
+                    if (_state == ViewState.Settings)
+                    {
+                        e.Handled = true;
+                        return;
+                    }
+
                     if (_state == ViewState.Menu)
                     {
                         StartGame(_difficulty);
@@ -543,7 +826,7 @@ namespace Snake_Spiel
                     return;
 
                 case Key.R:
-                    if (_state != ViewState.Menu)
+                    if (_state != ViewState.Menu && _state != ViewState.Settings)
                     {
                         StartGame(_difficulty);
                     }
@@ -552,7 +835,11 @@ namespace Snake_Spiel
                     return;
 
                 case Key.Escape:
-                    if (_state != ViewState.Menu)
+                    if (_state == ViewState.Settings)
+                    {
+                        CloseSettings();
+                    }
+                    else if (_state != ViewState.Menu)
                     {
                         ShowMenu();
                     }
@@ -562,12 +849,13 @@ namespace Snake_Spiel
 
                 case Key.M:
                     _sounds.SetMuted(!_sounds.IsMuted);
+                    _settings.Save();
                     e.Handled = true;
                     return;
 
                 case Key.D1:
                 case Key.NumPad1:
-                    if (_state != ViewState.Running)
+                    if (_state != ViewState.Running && _state != ViewState.Settings)
                     {
                         StartGame(Difficulty.Easy);
                     }
@@ -577,7 +865,7 @@ namespace Snake_Spiel
 
                 case Key.D2:
                 case Key.NumPad2:
-                    if (_state != ViewState.Running)
+                    if (_state != ViewState.Running && _state != ViewState.Settings)
                     {
                         StartGame(Difficulty.Normal);
                     }
@@ -587,7 +875,7 @@ namespace Snake_Spiel
 
                 case Key.D3:
                 case Key.NumPad3:
-                    if (_state != ViewState.Running)
+                    if (_state != ViewState.Running && _state != ViewState.Settings)
                     {
                         StartGame(Difficulty.Hard);
                     }
@@ -599,6 +887,11 @@ namespace Snake_Spiel
 
         private void TrySteer(Direction direction)
         {
+            if (_state == ViewState.Settings)
+            {
+                return;
+            }
+
             if (_state == ViewState.Running)
             {
                 _engine.EnqueueDirection(direction);
@@ -649,6 +942,7 @@ namespace Snake_Spiel
         private void Window_Closed(object sender, EventArgs e)
         {
             _timer.Stop();
+            _settings.Save();
             _sounds.Dispose();
         }
     }

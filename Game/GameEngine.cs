@@ -108,6 +108,25 @@ namespace Snake_Spiel.Game
 
         public bool IsFinished { get; private set; }
 
+        /// <summary>
+        /// Lebensdauer des Futters in Spielschritten; 0 heißt: es bleibt liegen.
+        /// Bewusst in Schritten und nicht in Sekunden, damit die Spiellogik ohne Uhr
+        /// auskommt und reproduzierbar testbar bleibt - die Oberfläche rechnet die
+        /// gewünschte Zeitspanne in Schritte um.
+        /// </summary>
+        public int FoodLifetimeTicks { get; set; }
+
+        /// <summary>Wie viele Schritte das aktuelle Futter schon liegt.</summary>
+        public int FoodAgeTicks { get; private set; }
+
+        /// <summary>True, wenn im letzten Schritt Futter verfallen und neu gesetzt wurde.</summary>
+        public bool FoodRelocated { get; private set; }
+
+        /// <summary>Verbleibender Anteil der Lebensdauer von 1 (frisch) bis 0 (gleich weg).</summary>
+        public double FoodFreshness => FoodLifetimeTicks <= 0
+            ? 1.0
+            : Math.Max(0.0, 1.0 - ((double)FoodAgeTicks / FoodLifetimeTicks));
+
         /// <summary>Setzt das Spiel auf den Startzustand zurück.</summary>
         public void Reset()
         {
@@ -117,6 +136,8 @@ namespace Snake_Spiel.Game
 
             Score = 0;
             FoodEaten = 0;
+            FoodAgeTicks = 0;
+            FoodRelocated = false;
             IsFinished = false;
             CurrentDirection = Direction.Right;
 
@@ -170,6 +191,8 @@ namespace Snake_Spiel.Game
                 return StepResult.Died;
             }
 
+            FoodRelocated = false;
+
             if (_pendingDirections.Count > 0)
             {
                 CurrentDirection = _pendingDirections.Dequeue();
@@ -208,9 +231,11 @@ namespace Snake_Spiel.Game
 
             if (!eats)
             {
+                AgeFood();
                 return StepResult.Moved;
             }
 
+            FoodAgeTicks = 0;
             FoodEaten++;
             Score += 10;
             HasFood = false;
@@ -221,7 +246,48 @@ namespace Snake_Spiel.Game
                 return StepResult.Won;
             }
 
+            FoodAgeTicks = 0;
             return StepResult.Ate;
+        }
+
+        /// <summary>
+        /// Lässt das liegende Futter altern. Ist die Lebensdauer aufgebraucht,
+        /// verschwindet es und taucht auf einem anderen freien Feld wieder auf.
+        /// </summary>
+        private void AgeFood()
+        {
+            if (!HasFood || FoodLifetimeTicks <= 0)
+            {
+                return;
+            }
+
+            FoodAgeTicks++;
+            if (FoodAgeTicks < FoodLifetimeTicks)
+            {
+                return;
+            }
+
+            // Das bisherige Feld kurzzeitig als belegt führen, damit das Futter
+            // nicht an derselben Stelle "neu" erscheint.
+            GridPoint previous = Food;
+            bool blocked = _occupied.Add(previous);
+
+            bool spawned = SpawnFood();
+
+            if (blocked)
+            {
+                _occupied.Remove(previous);
+            }
+
+            if (!spawned)
+            {
+                // Kein anderes Feld frei: das alte Futter bleibt einfach liegen.
+                Food = previous;
+                HasFood = true;
+            }
+
+            FoodAgeTicks = 0;
+            FoodRelocated = true;
         }
 
         /// <summary>Berechnet das Zielfeld inklusive Durchgang durch die Wände.</summary>

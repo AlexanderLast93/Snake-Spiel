@@ -1,10 +1,15 @@
 @echo off
 rem ---------------------------------------------------------------
 rem  Baut Snake als eine einzige EXE, die ohne .NET-Installation
-rem  auf jedem 64-Bit-Windows laeuft. Ergebnis: release\v1.0.0\Snake.exe
+rem  auf jedem 64-Bit-Windows laeuft. Ergebnis: release\v%VERSION%\Snake.exe
 rem ---------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
+
+rem Versionsnummer aus der Projektdatei lesen - so gibt es nur eine Stelle zum Pflegen
+set "VERSION="
+for /f "tokens=3 delims=<>" %%A in ('findstr /r "<Version>" "Snake Spiel.csproj"') do set "VERSION=%%A"
+if not defined VERSION set "VERSION=1.0.0"
 
 where dotnet >nul 2>&1
 if errorlevel 1 (
@@ -15,10 +20,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo === Snake 1.0.0 wird veroeffentlicht ===
+echo === Snake %VERSION% wird veroeffentlicht ===
 echo.
 
-if exist "release\v1.0.0" rmdir /s /q "release\v1.0.0"
+if exist "release\v%VERSION%" rmdir /s /q "release\v%VERSION%"
 
 dotnet publish "Snake Spiel.csproj" ^
     -c Release ^
@@ -28,7 +33,7 @@ dotnet publish "Snake Spiel.csproj" ^
     -p:IncludeNativeLibrariesForSelfExtract=true ^
     -p:EnableCompressionInSingleFile=true ^
     -p:DebugType=none ^
-    -o "release\v1.0.0"
+    -o "release\v%VERSION%"
 
 if errorlevel 1 (
     echo.
@@ -39,10 +44,10 @@ if errorlevel 1 (
 
 echo.
 echo === Fertig ===
-dir /b "release\v1.0.0"
+dir /b "release\v%VERSION%"
 echo.
-echo Die Datei liegt hier: %cd%\release\v1.0.0\Snake.exe
+echo Die Datei liegt hier: %cd%\release\v%VERSION%\Snake.exe
 echo Diese eine Datei kannst du weitergeben.
 echo.
-start "" "release\v1.0.0"
+start "" "release\v%VERSION%"
 pause

@@ -24,10 +24,10 @@ namespace Snake_Spiel.Game
         public const string EffectLevelUp = "level";
         public const string EffectRecord = "record";
         public const string EffectGameOver = "gameover";
+        public const string EffectHardcore = "hardcore";
+        public const string EffectImpossible = "impossible";
 
-        private const double EffectVolume = 0.90;
-        private const double MusicVolume = 0.42;
-
+        private readonly GameSettings _settings;
         private readonly Dispatcher _dispatcher;
         private readonly Dictionary<string, string> _effectFiles = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _musicFiles = new(StringComparer.Ordinal);
@@ -39,8 +39,9 @@ namespace Snake_Spiel.Game
         private bool _musicPaused;
         private bool _disposed;
 
-        public SoundEngine()
+        public SoundEngine(GameSettings settings)
         {
+            _settings = settings;
             _dispatcher = Dispatcher.CurrentDispatcher;
             StatusText = "Ton wird vorbereitet";
 
@@ -52,7 +53,13 @@ namespace Snake_Spiel.Game
         /// <summary>Kurzer Text für die Fußzeile: Zustand der Tonausgabe.</summary>
         public string StatusText { get; private set; }
 
-        public bool IsMuted { get; private set; }
+        public bool IsMuted => _settings.Muted;
+
+        /// <summary>Lautstärke der Musik von 0 bis 1.</summary>
+        public double MusicVolume => _settings.MusicVolume;
+
+        /// <summary>Lautstärke der Effekte von 0 bis 1.</summary>
+        public double EffectVolume => _settings.EffectVolume;
 
         public bool IsReady { get; private set; }
 
@@ -61,20 +68,41 @@ namespace Snake_Spiel.Game
 
         public void SetMuted(bool muted)
         {
-            IsMuted = muted;
+            _settings.SetMuted(muted);
+            ApplyVolumes();
+            UpdateStatus();
+        }
 
+        /// <summary>Stellt die Musiklautstärke sofort um (0 bis 1).</summary>
+        public void SetMusicVolume(double volume)
+        {
+            _settings.SetMusicVolume(volume);
+            ApplyVolumes();
+        }
+
+        /// <summary>Stellt die Effektlautstärke sofort um (0 bis 1).</summary>
+        public void SetEffectVolume(double volume)
+        {
+            _settings.SetEffectVolume(volume);
+            ApplyVolumes();
+        }
+
+        /// <summary>Überträgt die eingestellten Lautstärken auf alles, was gerade spielt.</summary>
+        private void ApplyVolumes()
+        {
             if (_musicPlayer != null)
             {
-                _musicPlayer.Volume = muted ? 0.0 : MusicVolume;
+                _musicPlayer.Volume = IsMuted ? 0.0 : MusicVolume;
             }
 
             foreach (MediaPlayer player in _effectPlayers.Values)
             {
-                player.Volume = muted ? 0.0 : EffectVolume;
+                player.Volume = IsMuted ? 0.0 : EffectVolume;
             }
-
-            UpdateStatus();
         }
+
+        /// <summary>Spielt einen Effekt zum Vorhören, auch wenn gerade nichts läuft.</summary>
+        public void PreviewEffect() => PlayEffect(EffectEat);
 
         /// <summary>Spielt einen der Effekte (Konstanten <c>Effect*</c>).</summary>
         public void PlayEffect(string key)
@@ -93,7 +121,7 @@ namespace Snake_Spiel.Game
                         return;
                     }
 
-                    player = new MediaPlayer { Volume = EffectVolume };
+                    player = new MediaPlayer { Volume = IsMuted ? 0.0 : EffectVolume };
                     player.Open(new Uri(path));
                     _effectPlayers[key] = player;
                 }
@@ -228,7 +256,9 @@ namespace Snake_Spiel.Game
                     (EffectEat, SoundBank.Eat),
                     (EffectLevelUp, SoundBank.LevelUp),
                     (EffectRecord, SoundBank.NewRecord),
-                    (EffectGameOver, SoundBank.GameOver)
+                    (EffectGameOver, SoundBank.GameOver),
+                    (EffectHardcore, SoundBank.HardcoreAlarm),
+                    (EffectImpossible, SoundBank.ImpossibleAlarm)
                 };
 
                 foreach ((string key, Func<byte[]> build) in effects)
@@ -242,6 +272,11 @@ namespace Snake_Spiel.Game
                         directory,
                         "music_" + difficulty.Key,
                         SoundBank.Music(difficulty.Key));
+                }
+
+                foreach (string extra in new[] { SoundBank.HardcoreKey, SoundBank.ImpossibleKey })
+                {
+                    _musicFiles[extra] = WriteWav(directory, "music_" + extra, SoundBank.Music(extra));
                 }
 
                 // MediaPlayer gehört dem Oberflächen-Thread.
