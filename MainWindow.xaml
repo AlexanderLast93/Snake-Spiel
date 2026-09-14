@@ -6,29 +6,33 @@
         xmlns:local="clr-namespace:Snake_Spiel"
         mc:Ignorable="d"
         Title="Snake"
-        Width="884"
-        Height="862"
+        Width="1440"
+        Height="900"
+        MinWidth="960"
+        MinHeight="600"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
-        ResizeMode="CanMinimize"
+        ResizeMode="CanResize"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"
         Background="{StaticResource BackgroundBrush}"
         PreviewKeyDown="Window_PreviewKeyDown"
+        StateChanged="Window_StateChanged"
         Closed="Window_Closed">
 
-    <Border BorderBrush="#FF17304A" BorderThickness="1">
+    <!-- Der Rahmen ist nur im Fenstermodus sichtbar; im Vollbild setzt der Code ihn auf 0. -->
+    <Border x:Name="WindowFrame" BorderBrush="#FF17304A" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Eigene Titelleiste, damit das Fenster durchgehend dunkel bleibt -->
-            <Grid Grid.Row="0"
+            <!-- Eigene Titelleiste, nur im Fenstermodus. Ziehen verschiebt, Doppelklick
+                 wechselt ins Vollbild. -->
+            <Grid x:Name="TitleBar"
+                  Grid.Row="0"
                   Background="#FF080D16"
                   Height="38"
                   MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
@@ -69,6 +73,11 @@
                             FontSize="15"
                             ToolTip="Einstellungen"
                             Click="SettingsButton_Click" />
+                    <Button Content="&#x26F6;"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            FontSize="15"
+                            ToolTip="Vollbild (F11)"
+                            Click="FullscreenButton_Click" />
                     <Button Content="&#x2013;"
                             Style="{StaticResource CaptionButtonStyle}"
                             ToolTip="Minimieren"
@@ -80,390 +89,482 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Anzeigeleiste -->
-            <StackPanel Grid.Row="1"
-                        Orientation="Horizontal"
-                        HorizontalAlignment="Center"
-                        Margin="0,18,0,16">
-                <Border Style="{StaticResource HudCardStyle}" Margin="6,0">
-                    <StackPanel>
-                        <TextBlock Text="PUNKTE" Style="{StaticResource HudLabelStyle}" />
-                        <TextBlock x:Name="ScoreText"
-                                   Text="0"
-                                   Style="{StaticResource HudValueStyle}"
-                                   Foreground="{StaticResource AccentBrush}" />
-                    </StackPanel>
-                </Border>
+            <!-- Bühne: Anzeige links, Spielfeld in der Mitte, Legende rechts. Die beiden
+                 Sternspalten sind gleich breit, dadurch steht das Feld immer mittig. Seine
+                 Größe rechnet der Code aus dem Platz, der neben den Seitentafeln bleibt
+                 (Stage_SizeChanged) - in ganzen Pixeln je Zelle, ohne Zoom, damit Raster
+                 und Schrift scharf bleiben. -->
+            <Grid x:Name="Stage" Grid.Row="1" SizeChanged="Stage_SizeChanged">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-                <Border Style="{StaticResource HudCardStyle}" Margin="6,0">
-                    <StackPanel>
-                        <TextBlock Text="REKORD" Style="{StaticResource HudLabelStyle}" />
-                        <TextBlock x:Name="HighScoreText" Text="0" Style="{StaticResource HudValueStyle}" />
-                    </StackPanel>
-                </Border>
+                <!-- Logos in den oberen Ecken: links die Schlange, rechts das Zeichen von
+                     Alexander Last. Die Bilder bringen ihren Schein selbst mit (Alphakanal),
+                     kein Effekt nötig. Höhe setzt FitBoard passend zur Bühne. -->
+                <Image x:Name="SnakeLogo"
+                       Grid.Column="0"
+                       Source="Assets/snake-logo.png"
+                       Height="160"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top"
+                       Margin="22,16,0,0"
+                       IsHitTestVisible="False"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
+                <Image x:Name="AlLogo"
+                       Grid.Column="2"
+                       Source="Assets/al-logo.png"
+                       Height="160"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Top"
+                       Margin="0,16,22,0"
+                       IsHitTestVisible="False"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
 
-                <Border Style="{StaticResource HudCardStyle}" Margin="6,0">
-                    <StackPanel>
-                        <TextBlock Text="LEVEL" Style="{StaticResource HudLabelStyle}" />
-                        <TextBlock x:Name="LevelText" Text="1" Style="{StaticResource HudValueStyle}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource HudCardStyle}" Margin="6,0" MinWidth="132">
-                    <StackPanel>
-                        <TextBlock Text="MODUS" Style="{StaticResource HudLabelStyle}" />
-                        <TextBlock x:Name="ModeText"
-                                   Text="NORMAL"
-                                   Style="{StaticResource HudValueStyle}"
-                                   FontSize="20"
-                                   Margin="0,6,0,0" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <!-- Spielfeld. Der Schein liegt auf einem eigenen, statischen Element hinter dem
-                 Rahmen: Säße er auf dem Rahmen selbst, müsste WPF bei jedem Bild das ganze
-                 Spielfeld samt Schlange neu weichzeichnen, weil sich der Inhalt ändert. -->
-            <Grid Grid.Row="2" x:Name="BoardShakeHost" Width="802" Height="642">
-                <Border x:Name="BoardGlow"
-                        CornerRadius="12"
-                        Background="#FF060B13">
-                    <Border.Effect>
-                        <DropShadowEffect x:Name="BoardGlowEffect"
-                                          Color="{StaticResource AccentColor}"
-                                          BlurRadius="34"
-                                          ShadowDepth="0"
-                                          Opacity="0.32" />
-                    </Border.Effect>
-                </Border>
-
-                <Border x:Name="BoardFrame"
-                        CornerRadius="12"
-                        Background="#FF060B13"
-                        BorderBrush="#FF1B4258"
-                        BorderThickness="1">
-                <Grid ClipToBounds="True">
-                    <Canvas x:Name="GridCanvas" Width="800" Height="640" />
-
-                    <Canvas x:Name="FoodCanvas"
-                            Width="800"
-                            Height="640"
-                            UseLayoutRounding="False"
-                            SnapsToDevicePixels="False">
-                        <Canvas.Effect>
-                            <DropShadowEffect x:Name="FoodGlow"
-                                              Color="{StaticResource FoodColor}"
-                                              BlurRadius="22"
-                                              ShadowDepth="0"
-                                              Opacity="0.95" />
-                        </Canvas.Effect>
-                    </Canvas>
-
-                    <!-- Ohne Pixelrundung: 4,85 px pro Bild sollen 4,85 px bleiben, nicht 5-5-4-5. -->
-                    <Canvas x:Name="SnakeCanvas"
-                            Width="800"
-                            Height="640"
-                            UseLayoutRounding="False"
-                            SnapsToDevicePixels="False">
-                        <Canvas.Effect>
-                            <DropShadowEffect x:Name="SnakeGlow"
-                                              Color="{StaticResource AccentColor}"
-                                              BlurRadius="18"
-                                              ShadowDepth="0"
-                                              Opacity="0.8" />
-                        </Canvas.Effect>
-                    </Canvas>
-
-                    <!-- Funken und Ringe: Fressen und Tod. Kein Effekt darauf - die Farben leuchten von selbst. -->
-                    <Canvas x:Name="ParticleCanvas"
-                            Width="800"
-                            Height="640"
-                            IsHitTestVisible="False"
-                            UseLayoutRounding="False"
-                            SnapsToDevicePixels="False" />
-
-                    <!-- Kurze Einblendung, wenn das Spiel in den Hardcore-Zustand kippt -->
-                    <StackPanel x:Name="HardcoreBanner"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Center"
-                                Opacity="0"
-                                IsHitTestVisible="False">
-                        <TextBlock x:Name="HardcoreBannerTitle"
-                                   Text="HARDCORE"
-                                   FontFamily="Segoe UI"
-                                   FontSize="64"
-                                   FontWeight="Bold"
-                                   Foreground="#FFFF8A3D"
-                                   HorizontalAlignment="Center">
-                            <TextBlock.Effect>
-                                <DropShadowEffect x:Name="HardcoreBannerGlow"
-                                                  Color="#FFFF6A1F"
-                                                  BlurRadius="40"
-                                                  ShadowDepth="0"
-                                                  Opacity="0.9" />
-                            </TextBlock.Effect>
-                        </TextBlock>
-                        <TextBlock x:Name="HardcoreBannerText"
-                                   Text="Das Futter bleibt nur noch drei Sekunden liegen"
-                                   FontFamily="Segoe UI"
-                                   FontSize="15"
-                                   Foreground="#FFFFC79B"
-                                   HorizontalAlignment="Center"
-                                   Margin="0,6,0,0" />
-                    </StackPanel>
-
-                    <!-- Overlay für Menü, Pause und Spielende -->
-                    <Grid x:Name="Overlay" Background="#EE050A12">
-
-                        <StackPanel x:Name="MenuPanel"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Center">
-                            <TextBlock Text="SNAKE" Style="{StaticResource OverlayTitleStyle}" />
-                            <TextBlock Text="Pfeiltasten steuern · die Wände sind offen"
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       FontSize="14"
-                                       Margin="0,6,0,30" />
-
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                <Button x:Name="EasyButton"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Tag="easy"
-                                        Click="DifficultyButton_Click">
-                                    <StackPanel>
-                                        <TextBlock Text="1 · LANGSAM"
-                                                   FontSize="15"
-                                                   FontWeight="Bold"
-                                                   HorizontalAlignment="Center" />
-                                        <TextBlock Text="gemütlich"
-                                                   FontSize="11"
-                                                   Foreground="{StaticResource MutedBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   Margin="0,3,0,0" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button x:Name="NormalButton"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Tag="normal"
-                                        Click="DifficultyButton_Click">
-                                    <StackPanel>
-                                        <TextBlock Text="2 · NORMAL"
-                                                   FontSize="15"
-                                                   FontWeight="Bold"
-                                                   HorizontalAlignment="Center" />
-                                        <TextBlock Text="klassisch"
-                                                   FontSize="11"
-                                                   Foreground="{StaticResource MutedBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   Margin="0,3,0,0" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button x:Name="HardButton"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Tag="hard"
-                                        Click="DifficultyButton_Click">
-                                    <StackPanel>
-                                        <TextBlock Text="3 · SCHNELL"
-                                                   FontSize="15"
-                                                   FontWeight="Bold"
-                                                   HorizontalAlignment="Center" />
-                                        <TextBlock Text="für schnelle Finger"
-                                                   FontSize="11"
-                                                   Foreground="{StaticResource MutedBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   Margin="0,3,0,0" />
-                                    </StackPanel>
-                                </Button>
-                            </StackPanel>
-
-                            <TextBlock x:Name="MenuRecordsText"
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       Margin="0,30,0,0"
-                                       Text="Rekorde: –" />
-                            <TextBlock Text="Enter startet den zuletzt gewählten Modus"
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       Margin="0,8,0,0" />
+                <!-- Anzeigetafel links -->
+                <StackPanel x:Name="LeftPanel"
+                            Grid.Column="0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Margin="16,0,26,0">
+                    <Border Style="{StaticResource HudCardStyle}" Width="160" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="PUNKTE" Style="{StaticResource HudLabelStyle}" />
+                            <TextBlock x:Name="ScoreText"
+                                       Text="0"
+                                       Style="{StaticResource HudValueStyle}"
+                                       Foreground="{StaticResource AccentBrush}" />
                         </StackPanel>
+                    </Border>
 
-                        <StackPanel x:Name="SettingsPanel"
+                    <Border Style="{StaticResource HudCardStyle}" Width="160" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="REKORD" Style="{StaticResource HudLabelStyle}" />
+                            <TextBlock x:Name="HighScoreText" Text="0" Style="{StaticResource HudValueStyle}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource HudCardStyle}" Width="160" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="LEVEL" Style="{StaticResource HudLabelStyle}" />
+                            <TextBlock x:Name="LevelText" Text="1" Style="{StaticResource HudValueStyle}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource HudCardStyle}" Width="160">
+                        <StackPanel>
+                            <TextBlock Text="MODUS" Style="{StaticResource HudLabelStyle}" />
+                            <TextBlock x:Name="ModeText"
+                                       Text="NORMAL"
+                                       Style="{StaticResource HudValueStyle}"
+                                       FontSize="20"
+                                       Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Spielfeld. Kein einziger Shader-Effekt (DropShadowEffect) liegt mehr im
+                     Bildpfad: Auf einem 4K-Monitor hätte WPF pro Bild Millionen Pixel weichzeichnen
+                     müssen - gemessen 24 bis 35 statt 60 Bilder pro Sekunde. Der Schein von Feld,
+                     Schlange und Futter wird stattdessen einmal in ein Bitmap gerechnet und als
+                     Bild hinter das Objekt gelegt (siehe RenderGlowSprite im Code).
+                     Breite und Höhe setzt der Code (Zellgröße mal Feldgröße plus Rahmen). -->
+                <Grid Grid.Column="1"
+                      x:Name="BoardShakeHost"
+                      Width="802"
+                      Height="642"
+                      VerticalAlignment="Center"
+                      Margin="8,24">
+                    <Image x:Name="BoardGlow"
+                           Stretch="Fill"
+                           IsHitTestVisible="False"
+                           RenderOptions.BitmapScalingMode="Linear" />
+
+                    <Border x:Name="BoardFrame"
+                            CornerRadius="12"
+                            Background="#FF060B13"
+                            BorderBrush="#FF1B4258"
+                            BorderThickness="1">
+                    <Grid ClipToBounds="True">
+                        <Canvas x:Name="GridCanvas" Width="800" Height="640" />
+
+                        <!-- Futter samt Schein-Sprite (siehe BuildFood) -->
+                        <Canvas x:Name="FoodCanvas"
+                                Width="800"
+                                Height="640"
+                                UseLayoutRounding="False"
+                                SnapsToDevicePixels="False" />
+
+                        <!-- Ohne Pixelrundung: 4,85 px pro Bild sollen 4,85 px bleiben, nicht 5-5-4-5.
+                             Der Schein der Segmente liegt als Sprite-Bilder (ZIndex -10) mit im Canvas,
+                             damit das Aufblitzen beim Tod (Deckkraft des Canvas) beides erfasst. -->
+                        <Canvas x:Name="SnakeCanvas"
+                                Width="800"
+                                Height="640"
+                                UseLayoutRounding="False"
+                                SnapsToDevicePixels="False" />
+
+                        <!-- Funken und Ringe: Fressen und Tod. Kein Effekt darauf - die Farben leuchten von selbst. -->
+                        <Canvas x:Name="ParticleCanvas"
+                                Width="800"
+                                Height="640"
+                                IsHitTestVisible="False"
+                                UseLayoutRounding="False"
+                                SnapsToDevicePixels="False" />
+
+                        <!-- Kurze Einblendung, wenn das Spiel in den Hardcore-Zustand kippt.
+                             Banner und Overlay werden per LayoutTransform mit dem Feld skaliert;
+                             "Ideal" statt "Display", weil Display-Text unter einer Skalierung
+                             ungleichmäßige Buchstabenabstände bekommt. -->
+                        <StackPanel x:Name="HardcoreBanner"
                                     VerticalAlignment="Center"
                                     HorizontalAlignment="Center"
-                                    Visibility="Collapsed">
-                            <TextBlock Text="EINSTELLUNGEN"
-                                       Style="{StaticResource OverlayTitleStyle}"
-                                       FontSize="38" />
-
-                            <Border Background="{StaticResource PanelBrush}"
-                                    BorderBrush="{StaticResource PanelBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="12"
-                                    Padding="28,22"
-                                    Margin="0,26,0,0">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,18">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="96" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Musik" Style="{StaticResource SettingsLabelStyle}" />
-                                        <Slider Grid.Column="1"
-                                                x:Name="MusicVolumeSlider"
-                                                Style="{StaticResource NeonSliderStyle}"
-                                                ValueChanged="MusicVolumeSlider_ValueChanged" />
-                                        <TextBlock Grid.Column="2"
-                                                   x:Name="MusicVolumeText"
-                                                   Text="45 %"
-                                                   Style="{StaticResource SettingsValueStyle}"
-                                                   Margin="14,0,0,0" />
-                                    </Grid>
-
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="96" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Effekte" Style="{StaticResource SettingsLabelStyle}" />
-                                        <Slider Grid.Column="1"
-                                                x:Name="EffectVolumeSlider"
-                                                Style="{StaticResource NeonSliderStyle}"
-                                                ValueChanged="EffectVolumeSlider_ValueChanged" />
-                                        <TextBlock Grid.Column="2"
-                                                   x:Name="EffectVolumeText"
-                                                   Text="90 %"
-                                                   Style="{StaticResource SettingsValueStyle}"
-                                                   Margin="14,0,0,0" />
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-
-                            <StackPanel Orientation="Horizontal"
-                                        HorizontalAlignment="Center"
-                                        Margin="0,24,0,0">
-                                <Button x:Name="MuteButton"
-                                        Content="Ton stumm schalten"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Click="MuteButton_Click" />
-                                <Button Content="Zurück (Esc)"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Click="CloseSettingsButton_Click" />
-                            </StackPanel>
-
-                            <TextBlock Text="Die Einstellungen bleiben für das nächste Mal gespeichert."
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       Margin="0,20,0,0" />
-                        </StackPanel>
-
-                        <StackPanel x:Name="PausePanel"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Center"
-                                    Visibility="Collapsed">
-                            <TextBlock Text="PAUSE" Style="{StaticResource OverlayTitleStyle}" FontSize="48" />
-                            <TextBlock Text="Leertaste = weiterspielen · Esc = zurück ins Menü"
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       Margin="0,14,0,0" />
-                        </StackPanel>
-
-                        <StackPanel x:Name="GameOverPanel"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Center"
-                                    Visibility="Collapsed">
-                            <TextBlock Text="GAME OVER"
-                                       Style="{StaticResource OverlayTitleStyle}"
-                                       FontSize="50"
-                                       Foreground="{StaticResource DangerBrush}">
+                                    Opacity="0"
+                                    IsHitTestVisible="False"
+                                    TextOptions.TextFormattingMode="Ideal">
+                            <TextBlock x:Name="HardcoreBannerTitle"
+                                       Text="HARDCORE"
+                                       FontFamily="Segoe UI"
+                                       FontSize="64"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFF8A3D"
+                                       HorizontalAlignment="Center">
                                 <TextBlock.Effect>
-                                    <DropShadowEffect Color="{StaticResource DangerColor}"
-                                                      BlurRadius="32"
+                                    <DropShadowEffect x:Name="HardcoreBannerGlow"
+                                                      Color="#FFFF6A1F"
+                                                      BlurRadius="40"
                                                       ShadowDepth="0"
-                                                      Opacity="0.75" />
+                                                      Opacity="0.9" />
                                 </TextBlock.Effect>
                             </TextBlock>
-
-                            <TextBlock x:Name="GameOverScoreText"
-                                       Text="0 Punkte"
-                                       FontFamily="Consolas"
-                                       FontSize="30"
-                                       FontWeight="Bold"
-                                       Foreground="{StaticResource TextBrush}"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,16,0,0" />
-
-                            <TextBlock x:Name="NewRecordText"
-                                       Text="NEUER REKORD"
+                            <TextBlock x:Name="HardcoreBannerText"
+                                       Text="Das Futter bleibt nur noch drei Sekunden liegen"
                                        FontFamily="Segoe UI"
                                        FontSize="15"
-                                       FontWeight="Bold"
-                                       Foreground="{StaticResource AccentBrush}"
+                                       Foreground="#FFFFC79B"
                                        HorizontalAlignment="Center"
-                                       Margin="0,10,0,0"
-                                       Visibility="Collapsed">
-                                <TextBlock.Effect>
-                                    <DropShadowEffect Color="{StaticResource AccentColor}"
-                                                      BlurRadius="20"
-                                                      ShadowDepth="0"
-                                                      Opacity="0.85" />
-                                </TextBlock.Effect>
-                            </TextBlock>
-
-                            <TextBlock x:Name="GameOverDetailText"
-                                       Style="{StaticResource OverlayHintStyle}"
-                                       Margin="0,12,0,0" />
-
-                            <StackPanel Orientation="Horizontal"
-                                        HorizontalAlignment="Center"
-                                        Margin="0,26,0,0">
-                                <Button Content="Nochmal (Enter)"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Click="RestartButton_Click" />
-                                <Button Content="Menü (Esc)"
-                                        Style="{StaticResource NeonButtonStyle}"
-                                        Margin="8,0"
-                                        Click="MenuButton_Click" />
-                            </StackPanel>
+                                       Margin="0,6,0,0" />
                         </StackPanel>
+
+                        <!-- Overlay für Menü, Pause und Spielende -->
+                        <Grid x:Name="Overlay" Background="#EE050A12" TextOptions.TextFormattingMode="Ideal">
+
+                            <StackPanel x:Name="MenuPanel"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Center">
+                                <TextBlock Text="SNAKE" Style="{StaticResource OverlayTitleStyle}" />
+                                <TextBlock Text="Pfeiltasten steuern · die Wände sind offen"
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           FontSize="14"
+                                           Margin="0,6,0,30" />
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <Button x:Name="EasyButton"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Tag="easy"
+                                            Click="DifficultyButton_Click">
+                                        <StackPanel>
+                                            <TextBlock Text="1 · LANGSAM"
+                                                       FontSize="15"
+                                                       FontWeight="Bold"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock Text="gemütlich"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button x:Name="NormalButton"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Tag="normal"
+                                            Click="DifficultyButton_Click">
+                                        <StackPanel>
+                                            <TextBlock Text="2 · NORMAL"
+                                                       FontSize="15"
+                                                       FontWeight="Bold"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock Text="klassisch"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button x:Name="HardButton"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Tag="hard"
+                                            Click="DifficultyButton_Click">
+                                        <StackPanel>
+                                            <TextBlock Text="3 · SCHNELL"
+                                                       FontSize="15"
+                                                       FontWeight="Bold"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock Text="für schnelle Finger"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+
+                                <TextBlock x:Name="MenuRecordsText"
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           Margin="0,30,0,0"
+                                           Text="Rekorde: –" />
+                                <TextBlock Text="Enter startet den zuletzt gewählten Modus"
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           Margin="0,8,0,0" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="SettingsPanel"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <TextBlock Text="EINSTELLUNGEN"
+                                           Style="{StaticResource OverlayTitleStyle}"
+                                           FontSize="38" />
+
+                                <Border Background="{StaticResource PanelBrush}"
+                                        BorderBrush="{StaticResource PanelBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="12"
+                                        Padding="28,22"
+                                        Margin="0,26,0,0">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,18">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Musik" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Slider Grid.Column="1"
+                                                    x:Name="MusicVolumeSlider"
+                                                    Style="{StaticResource NeonSliderStyle}"
+                                                    ValueChanged="MusicVolumeSlider_ValueChanged" />
+                                            <TextBlock Grid.Column="2"
+                                                       x:Name="MusicVolumeText"
+                                                       Text="45 %"
+                                                       Style="{StaticResource SettingsValueStyle}"
+                                                       Margin="14,0,0,0" />
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,18">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Effekte" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Slider Grid.Column="1"
+                                                    x:Name="EffectVolumeSlider"
+                                                    Style="{StaticResource NeonSliderStyle}"
+                                                    ValueChanged="EffectVolumeSlider_ValueChanged" />
+                                            <TextBlock Grid.Column="2"
+                                                       x:Name="EffectVolumeText"
+                                                       Text="90 %"
+                                                       Style="{StaticResource SettingsValueStyle}"
+                                                       Margin="14,0,0,0" />
+                                        </Grid>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="96" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Anzeige" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Button Grid.Column="1"
+                                                    x:Name="FullscreenButton"
+                                                    Content="Vollbild: an (F11)"
+                                                    Style="{StaticResource NeonButtonStyle}"
+                                                    FontSize="13"
+                                                    Padding="16,7"
+                                                    HorizontalAlignment="Left"
+                                                    Click="FullscreenButton_Click" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <StackPanel Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            Margin="0,24,0,0">
+                                    <Button x:Name="MuteButton"
+                                            Content="Ton stumm schalten"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Click="MuteButton_Click" />
+                                    <Button Content="Zurück (Esc)"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Click="CloseSettingsButton_Click" />
+                                </StackPanel>
+
+                                <TextBlock Text="Die Einstellungen bleiben für das nächste Mal gespeichert."
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           Margin="0,20,0,0" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="PausePanel"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <TextBlock Text="PAUSE" Style="{StaticResource OverlayTitleStyle}" FontSize="48" />
+                                <TextBlock Text="Leertaste = weiterspielen · Esc = zurück ins Menü"
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           Margin="0,14,0,0" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="GameOverPanel"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <TextBlock Text="GAME OVER"
+                                           Style="{StaticResource OverlayTitleStyle}"
+                                           FontSize="50"
+                                           Foreground="{StaticResource DangerBrush}">
+                                    <TextBlock.Effect>
+                                        <DropShadowEffect Color="{StaticResource DangerColor}"
+                                                          BlurRadius="32"
+                                                          ShadowDepth="0"
+                                                          Opacity="0.75" />
+                                    </TextBlock.Effect>
+                                </TextBlock>
+
+                                <TextBlock x:Name="GameOverScoreText"
+                                           Text="0 Punkte"
+                                           FontFamily="Consolas"
+                                           FontSize="30"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource TextBrush}"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,16,0,0" />
+
+                                <TextBlock x:Name="NewRecordText"
+                                           Text="NEUER REKORD"
+                                           FontFamily="Segoe UI"
+                                           FontSize="15"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,10,0,0"
+                                           Visibility="Collapsed">
+                                    <TextBlock.Effect>
+                                        <DropShadowEffect Color="{StaticResource AccentColor}"
+                                                          BlurRadius="20"
+                                                          ShadowDepth="0"
+                                                          Opacity="0.85" />
+                                    </TextBlock.Effect>
+                                </TextBlock>
+
+                                <TextBlock x:Name="GameOverDetailText"
+                                           Style="{StaticResource OverlayHintStyle}"
+                                           Margin="0,12,0,0" />
+
+                                <StackPanel Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            Margin="0,26,0,0">
+                                    <Button Content="Nochmal (Enter)"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Click="RestartButton_Click" />
+                                    <Button Content="Menü (Esc)"
+                                            Style="{StaticResource NeonButtonStyle}"
+                                            Margin="8,0"
+                                            Click="MenuButton_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Messanzeige, F3 -->
+                        <TextBlock x:Name="DiagText"
+                                   VerticalAlignment="Top"
+                                   HorizontalAlignment="Left"
+                                   Margin="10,8,0,0"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   Foreground="#FFB8F4FF"
+                                   Background="#B0050A12"
+                                   Padding="8,5"
+                                   IsHitTestVisible="False"
+                                   Visibility="Collapsed"
+                                   Text="" />
+                    </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- Legende und Knöpfe rechts -->
+                <StackPanel x:Name="RightPanel"
+                            Grid.Column="2"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center"
+                            Width="214"
+                            Margin="26,0,16,0">
+                    <Button Content="&#x2699;  Einstellungen"
+                            Style="{StaticResource NeonButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            FontSize="13"
+                            Padding="18,9"
+                            Margin="0,0,0,8"
+                            Click="SettingsButton_Click" />
+                    <Button Content="&#x2715;  Beenden"
+                            Style="{StaticResource NeonButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            FontSize="13"
+                            Padding="18,9"
+                            Margin="0,0,0,26"
+                            Click="CloseButton_Click" />
+
+                    <TextBlock Text="STEUERUNG" Style="{StaticResource HudLabelStyle}" HorizontalAlignment="Left" Margin="2,0,0,8" />
+
+                    <Grid Margin="2,0,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                            <RowDefinition /><RowDefinition /><RowDefinition />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Pfeile / WASD" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="lenken" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Leertaste" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="Pause" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Enter / R" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="Neustart" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Esc" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="Menü" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="1 · 2 · 3" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="Grad wählen" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="M" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="5" Grid.Column="1" Text="Ton stumm" Style="{StaticResource LegendTextStyle}" />
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="F11" Style="{StaticResource LegendKeyStyle}" />
+                        <TextBlock Grid.Row="6" Grid.Column="1" Text="Vollbild / Fenster" Style="{StaticResource LegendTextStyle}" />
                     </Grid>
 
-                    <!-- Messanzeige, F3 -->
-                    <TextBlock x:Name="DiagText"
-                               VerticalAlignment="Top"
-                               HorizontalAlignment="Left"
-                               Margin="10,8,0,0"
-                               FontFamily="Consolas"
+                    <TextBlock x:Name="SoundStatusText"
+                               Margin="2,22,0,0"
+                               FontFamily="Segoe UI"
                                FontSize="12"
-                               Foreground="#FFB8F4FF"
-                               Background="#B0050A12"
-                               Padding="8,5"
-                               IsHitTestVisible="False"
-                               Visibility="Collapsed"
-                               Text="" />
-                </Grid>
-                </Border>
-            </Grid>
-
-            <!-- Fußzeile mit Tastenbelegung -->
-            <Grid Grid.Row="3" Margin="42,14,42,16">
-                <TextBlock HorizontalAlignment="Left"
-                           VerticalAlignment="Center"
-                           FontFamily="Segoe UI"
-                           FontSize="12"
-                           Foreground="{StaticResource MutedBrush}"
-                           Text="Pfeiltasten / WASD = lenken     Leertaste = Pause     R = Neustart     Esc = Menü" />
-                <TextBlock x:Name="SoundStatusText"
-                           HorizontalAlignment="Right"
-                           VerticalAlignment="Center"
-                           FontFamily="Segoe UI"
-                           FontSize="12"
-                           Foreground="{StaticResource MutedBrush}"
-                           Text="M = Ton aus" />
+                               Foreground="{StaticResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Text="M = Ton aus" />
+                    <TextBlock x:Name="VersionFooterText"
+                               Margin="2,6,0,0"
+                               FontFamily="Segoe UI"
+                               FontSize="11"
+                               Foreground="#FF3F5468"
+                               Text="WPF Edition" />
+                </StackPanel>
             </Grid>
         </Grid>
     </Border>

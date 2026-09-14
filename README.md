@@ -1,6 +1,6 @@
 ﻿# Snake
 
-Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.3.0.
+Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.4.0.
 
 Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Es gibt drei
 Schwierigkeitsgrade, einen lokal gespeicherten Rekord je Grad und Musik, die das Programm
@@ -14,6 +14,16 @@ Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, grün, gel
 Die Schlange gleitet: Die Spiellogik läuft mit fester Schrittrate, gezeichnet wird mit der
 Bildrate des Monitors, dazwischen wird interpoliert — auch durch die Wände hindurch. Fressen
 und Sterben haben Wumms: kurzes Beben, Ring und Funken beim Fressen, Funkenregen beim Tod.
+
+Das Spiel läuft randlos im Vollbild. Das Feld bekommt die volle Höhe des Bildschirms, links
+steht die Anzeige, rechts die Tastenlegende — auf 16:9 wie auf 16:10 ohne schwarze Balken.
+Die Zellgröße wird in ganzen Pixeln aus dem Platz berechnet (Full HD: 51 px, 2560×1440 bei
+125 %: 55 px), nichts wird gezoomt, Raster und Schrift bleiben scharf. **F11** wechselt ins Fenster
+und zurück; die Wahl wird gespeichert. Im Menü läuft eine eigene, ruhige Musik.
+
+Der Neonschein von Schlange, Futter und Feld ist kein Shader-Effekt mehr, sondern wird einmal in
+ein Bitmap gerechnet und als Bild hinter das Objekt gelegt. Auf dem großen Vollbild-Feld hatte der
+`DropShadowEffect` zwei Drittel der Bildrate gekostet (24 bis 35 FPS); mit Sprites sind es 60.
 
 Wer auf **Schnell** lange genug überlebt, wird feststellen, dass das Spiel noch etwas vorhat.
 
@@ -48,7 +58,9 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 | Esc | zurück ins Menü |
 | M | Ton stumm schalten |
 | 1 / 2 / 3 | Schwierigkeitsgrad wählen |
-| Zahnrad oben rechts | Lautstärke für Musik und Effekte einstellen |
+| F11 | Vollbild oder Fenster (auch Doppelklick auf die Titelleiste im Fenstermodus) |
+| Zahnrad | Lautstärke für Musik und Effekte, Vollbild an/aus |
+| F3 / F4 | Messanzeige ein- und ausblenden / Scheineffekte abschalten (zur Fehlersuche) |
 
 ## Aufbau des Projekts
 
@@ -59,13 +71,14 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 | `Game/StepClock.cs` | Fixed-Step-Uhr: feste Logikrate, liefert den Interpolationsanteil fürs Zeichnen |
 | `Game/GridMotion.cs` | Bewegung eines Segments zwischen zwei Feldern, wandbewusst (24 → 0 heißt „nach 25“) |
 | `Game/HighScoreService.cs` | Rekord je Grad, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
-| `Game/GameSettings.cs` | Lautstärken, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
+| `Game/GameSettings.cs` | Lautstärken und Fenstermodus, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
 | `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Echo, WAV-Ausgabe |
-| `Game/SoundBank.cs` | Die konkreten Klänge und die drei Musikstücke |
+| `Game/SoundBank.cs` | Die konkreten Klänge und die sechs Musikstücke (Menü, drei Grade, Hardcore, Unmöglich) |
 | `Game/SoundEngine.cs` | Wiedergabe über `MediaPlayer`, Musikschleife, Stummschaltung |
-| `MainWindow.xaml(.cs)` | Fenster, Darstellung, Eingaben |
+| `MainWindow.xaml(.cs)` | Fenster, Vollbild, Darstellung mit bildschirmabhängiger Zellgröße, Eingaben |
 | `App.xaml` | Farben und Stile |
-| `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr und Interpolation |
+| `Assets/` | Snake-Logo (oben links) und AL-Logo (oben rechts), als Ressource in der EXE |
+| `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr, Interpolation, Menümusik und Einstellungen |
 | `pruefen.cmd` | Baut das Spiel und lässt den Teststand laufen; Protokoll in `Claude outputs\pruefung.log` |
 
 Die Spielregeln stecken bewusst in Klassen ohne Oberflächenbezug. Dadurch lassen sie sich ohne
@@ -89,7 +102,7 @@ In Visual Studio genügt F5.
 Doppelklick auf `veroeffentlichen.cmd`. Das Skript legt
 
 ```
-release\v1.3.0\Snake.exe
+release\v1.4.0\Snake.exe
 ```
 
 an: eine einzige Datei mit eingebauter .NET-Laufzeit. Sie startet auf jedem 64-Bit-Windows,
@@ -105,8 +118,8 @@ mit einem gekauften Codesignatur-Zertifikat.
 ## Versionsstand
 
 Die Versionsnummer steht an einer einzigen Stelle: in `Snake Spiel.csproj` unter `Version`,
-`AssemblyVersion` und `FileVersion`. Das Fenster liest sie zur Laufzeit aus und zeigt sie oben
-links an, und `veroeffentlichen.cmd` holt sich von dort den Namen des Ausgabeordners.
+`AssemblyVersion` und `FileVersion`. Das Fenster liest sie zur Laufzeit aus und zeigt sie unter
+der Tastenlegende an, und `veroeffentlichen.cmd` holt sich von dort den Namen des Ausgabeordners.
 Für eine neue Fassung dort die Nummer erhöhen, danach neu veröffentlichen.
 
 ## Versionsverwaltung

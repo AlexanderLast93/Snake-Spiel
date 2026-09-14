@@ -9,7 +9,8 @@ using System.Windows.Threading;
 namespace Snake_Spiel.Game
 {
     /// <summary>
-    /// Tonausgabe des Spiels: kurze Effekte und eine Musikschleife je Schwierigkeitsgrad.
+    /// Tonausgabe des Spiels: kurze Effekte und Musikschleifen (Menü, je Schwierigkeitsgrad,
+    /// Hardcore, Unmöglich).
     /// Alle Klänge werden beim Start berechnet (siehe <see cref="SoundBank"/>) und als
     /// WAV in den Temp-Ordner geschrieben, weil <see cref="MediaPlayer"/> Dateien braucht -
     /// dafür können Musik und Effekte gleichzeitig laufen, was mit System.Media.SoundPlayer
@@ -135,7 +136,32 @@ namespace Snake_Spiel.Game
             }
         }
 
-        /// <summary>Startet die Musikschleife des Schwierigkeitsgrads.</summary>
+        /// <summary>Schlüssel der Musik, die gerade läuft oder pausiert - sonst null.</summary>
+        public string? CurrentMusic => _currentMusic ?? _pendingMusic;
+
+        /// <summary>
+        /// Sorgt dafür, dass genau dieses Stück läuft: Läuft es schon, passiert nichts
+        /// (eine Pause wird aufgehoben); läuft etwas anderes, wird gewechselt. Gedacht
+        /// für das Menü, das man aus den Einstellungen wieder betritt, ohne dass die
+        /// Musik dabei von vorn anfängt.
+        /// </summary>
+        public void EnsureMusic(string key)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (string.Equals(CurrentMusic, key, StringComparison.Ordinal))
+            {
+                ResumeMusic();
+                return;
+            }
+
+            StartMusic(key);
+        }
+
+        /// <summary>Startet die Musikschleife des Schwierigkeitsgrads - immer von vorn.</summary>
         public void StartMusic(string difficultyKey)
         {
             if (_disposed)
@@ -274,7 +300,7 @@ namespace Snake_Spiel.Game
                         SoundBank.Music(difficulty.Key));
                 }
 
-                foreach (string extra in new[] { SoundBank.HardcoreKey, SoundBank.ImpossibleKey })
+                foreach (string extra in new[] { SoundBank.MenuKey, SoundBank.HardcoreKey, SoundBank.ImpossibleKey })
                 {
                     _musicFiles[extra] = WriteWav(directory, "music_" + extra, SoundBank.Music(extra));
                 }

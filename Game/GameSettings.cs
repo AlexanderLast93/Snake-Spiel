@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace Snake_Spiel.Game
 {
     /// <summary>
-    /// Dauerhafte Einstellungen des Spielers - derzeit die Lautstärken.
+    /// Dauerhafte Einstellungen des Spielers - Lautstärken und Fenstermodus.
     /// Liegt als JSON neben den Rekorden unter %AppData%\SnakeSpiel.
     /// Fehler beim Lesen oder Schreiben dürfen das Spiel nicht stören:
     /// im Zweifel gelten die Standardwerte.
@@ -38,6 +38,9 @@ namespace Snake_Spiel.Game
         /// <summary>Schaltet alles stumm, ohne die eingestellten Lautstärken zu verlieren.</summary>
         public bool Muted { get; private set; }
 
+        /// <summary>Randloses Vollbild (Standard) oder normales Fenster. F11 schaltet um.</summary>
+        public bool Fullscreen { get; private set; } = true;
+
         public string? LastError { get; private set; }
 
         public string FilePath => _filePath;
@@ -47,6 +50,8 @@ namespace Snake_Spiel.Game
         public void SetEffectVolume(double value) => EffectVolume = Clamp(value);
 
         public void SetMuted(bool muted) => Muted = muted;
+
+        public void SetFullscreen(bool fullscreen) => Fullscreen = fullscreen;
 
         private static double Clamp(double value)
         {
@@ -82,6 +87,7 @@ namespace Snake_Spiel.Game
                 MusicVolume = Clamp(loaded.MusicVolume);
                 EffectVolume = Clamp(loaded.EffectVolume);
                 Muted = loaded.Muted;
+                Fullscreen = loaded.Fullscreen;
             }
             catch (Exception ex)
             {
@@ -104,7 +110,8 @@ namespace Snake_Spiel.Game
                 {
                     MusicVolume = MusicVolume,
                     EffectVolume = EffectVolume,
-                    Muted = Muted
+                    Muted = Muted,
+                    Fullscreen = Fullscreen
                 };
 
                 File.WriteAllText(
@@ -130,6 +137,10 @@ namespace Snake_Spiel.Game
 
             [JsonPropertyName("muted")]
             public bool Muted { get; set; }
+
+            // Fehlt in Dateien aus 1.3.0 und älter: dann gilt Vollbild.
+            [JsonPropertyName("fullscreen")]
+            public bool Fullscreen { get; set; } = true;
         }
     }
 }

@@ -20,6 +20,8 @@ internal static class Program
         GridMotionTests();
         StepClockTests();
         FuzzInterpolationInvariant();
+        MenuMusicTests();
+        SettingsTests();
         NoWpfReference();
 
         Console.WriteLine();
@@ -436,6 +438,115 @@ internal static class Program
 
         Check($"Kein Segment bewegt sich weiter als ein Feld ({stepsTotal} Schritte, {wraps} Wanddurchgänge)", violations == 0);
         Check("Wanddurchgänge kamen im Fuzz tatsächlich vor", wraps > 100);
+    }
+
+    // ------------------------------------------------------------------
+
+    /// <summary>Liest die 16-Bit-Mono-Samples aus einer WAV, wie Synth.ToWav sie schreibt.</summary>
+    private static short[] WavSamples(byte[] wav)
+    {
+        var samples = new short[(wav.Length - 44) / 2];
+        Buffer.BlockCopy(wav, 44, samples, 0, samples.Length * 2);
+        return samples;
+    }
+
+    private static void MenuMusicTests()
+    {
+        Section("Menümusik (1.4.0)");
+
+        byte[] wav = SoundBank.Music(SoundBank.MenuKey);
+        Check("WAV-Kopf: RIFF/WAVE", wav.Length > 44
+            && wav[0] == (byte)'R' && wav[1] == (byte)'I' && wav[2] == (byte)'F' && wav[3] == (byte)'F'
+            && wav[8] == (byte)'W' && wav[9] == (byte)'A' && wav[10] == (byte)'V' && wav[11] == (byte)'E');
+
+        short[] samples = WavSamples(wav);
+
+        // 8 Takte bei 84 Schlägen pro Minute: 8 * 4 * 60/84 s = 22,857 s
+        int expected = (int)(Synth.SampleRate * (60.0 / 84.0 * 4 * 8));
+        Check($"Länge = acht Takte bei 84 BPM ({samples.Length} Samples)", samples.Length == expected);
+
+        double peak = 0.0;
+        double sum = 0.0;
+        foreach (short sample in samples)
+        {
+            double v = Math.Abs(sample / 32767.0);
+            peak = Math.Max(peak, v);
+            sum += v * v;
+        }
+
+        double rms = Math.Sqrt(sum / samples.Length);
+        Check($"Spitzenpegel zwischen 0,55 und 0,75 (war {peak:0.000}) - leiser als die Spielmusik", peak is >= 0.55 and <= 0.75);
+        Check($"Nicht leer, nicht zerrend: RMS zwischen 0,08 und 0,30 (war {rms:0.000})", rms is >= 0.08 and <= 0.30);
+
+        // Schleifennaht: der Sprung vom letzten zum ersten Sample darf nicht größer sein
+        // als ein gewöhnlicher Sprung zwischen zwei Nachbarn im Stück.
+        double seam = Math.Abs((samples[^1] - samples[0]) / 32767.0);
+        double maxStep = 0.0;
+        for (int i = 1; i < samples.Length; i++)
+        {
+            maxStep = Math.Max(maxStep, Math.Abs((samples[i] - samples[i - 1]) / 32767.0));
+        }
+
+        Check($"Naht ohne Knacken: Sprung {seam:0.0000} kleiner als der größte Sprung im Stück {maxStep:0.0000}", seam < maxStep);
+        Check("Naht praktisch stetig (< 0,01)", seam < 0.01);
+
+        // Alle Schlüssel liefern etwas Brauchbares und sind voneinander verschieden.
+        string[] keys = { SoundBank.MenuKey, "easy", "normal", "hard", SoundBank.HardcoreKey, SoundBank.ImpossibleKey };
+        var lengths = new HashSet<int>();
+        bool allValid = true;
+        foreach (string key in keys)
+        {
+            byte[] w = SoundBank.Music(key);
+            allValid &= w.Length > 44100;
+            lengths.Add(w.Length);
+        }
+
+        Check("Alle sechs Musikschlüssel liefern eine WAV länger als eine Sekunde", allValid);
+        Check("Die sechs Stücke sind verschieden lang (kein Schlüssel fällt auf den Standard zurück)", lengths.Count == keys.Length);
+    }
+
+    // ------------------------------------------------------------------
+
+    private static void SettingsTests()
+    {
+        Section("Einstellungen: Vollbild wird gespeichert (1.4.0)");
+
+        string path = Path.Combine(Path.GetTempPath(), "SnakeSpiel-Tests", Guid.NewGuid().ToString("N"), "settings.json");
+        try
+        {
+            var fresh = new GameSettings(path);
+            Check("Ohne Datei: Vollbild ist Standard", fresh.Fullscreen);
+            Check("Ohne Datei: Standardlautstärken", Math.Abs(fresh.MusicVolume - 0.45) < 1e-9 && Math.Abs(fresh.EffectVolume - 0.90) < 1e-9);
+
+            fresh.SetFullscreen(false);
+            fresh.SetMusicVolume(0.3);
+            fresh.Save();
+            Check("Speichern ohne Fehler", fresh.LastError == null && File.Exists(path));
+
+            var reloaded = new GameSettings(path);
+            Check("Fenstermodus überlebt den Neustart", !reloaded.Fullscreen);
+            Check("Lautstärke überlebt den Neustart", Math.Abs(reloaded.MusicVolume - 0.3) < 1e-9);
+
+            // Datei aus 1.3.0: kein "fullscreen"-Feld - dann gilt Vollbild.
+            File.WriteAllText(path, "{ \"musicVolume\": 0.5, \"effectVolume\": 0.8, \"muted\": true }");
+            var legacy = new GameSettings(path);
+            Check("Datei aus 1.3.0 ohne Feld: Vollbild an, Rest übernommen", legacy.Fullscreen && legacy.Muted && Math.Abs(legacy.MusicVolume - 0.5) < 1e-9);
+
+            File.WriteAllText(path, "{ kaputt");
+            var broken = new GameSettings(path);
+            Check("Kaputte Datei: Standardwerte, Fehler gemerkt", broken.Fullscreen && broken.LastError != null);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+            }
+            catch (Exception)
+            {
+                // Aufräumen ist Kür.
+            }
+        }
     }
 
     // ------------------------------------------------------------------

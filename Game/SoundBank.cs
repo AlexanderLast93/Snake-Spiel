@@ -3,8 +3,9 @@
 namespace Snake_Spiel.Game
 {
     /// <summary>
-    /// Sämtliche Klänge des Spiels als fertige WAV-Daten - Effekte und die drei
-    /// Musikschleifen. Alles wird gerechnet, nichts wird mitgeliefert.
+    /// Sämtliche Klänge des Spiels als fertige WAV-Daten - Effekte und die sechs
+    /// Musikschleifen (Menü, drei Grade, Hardcore, Unmöglich). Alles wird gerechnet,
+    /// nichts wird mitgeliefert.
     /// Die Musikstücke sind so gebaut, dass sie sich nahtlos wiederholen.
     /// </summary>
     public static class SoundBank
@@ -211,6 +212,7 @@ namespace Snake_Spiel.Game
             "hard" => BuildDramatic(),
             HardcoreKey => BuildHardcore(),
             ImpossibleKey => BuildImpossible(),
+            MenuKey => BuildMenu(),
             _ => BuildCool()
         };
 
@@ -219,6 +221,125 @@ namespace Snake_Spiel.Game
 
         /// <summary>Schlüssel der Musik für die Stufe Unmöglich.</summary>
         public const string ImpossibleKey = "impossible";
+
+        /// <summary>Schlüssel der Musik im Hauptmenü.</summary>
+        public const string MenuKey = "menu";
+
+        /// <summary>
+        /// MENÜ - dunkles Neon in Ruhe: zwei gegeneinander verstimmte Sägezahnflächen,
+        /// ein Bass in halben Noten, ein Arpeggio mit punktiertem Echo und eine sparsame
+        /// Melodie. Kein Schlagzeug, nur ein leiser Puls - man sitzt im Menü, man spielt
+        /// noch nicht. 84 Schläge pro Minute, Am7 - Fmaj7 - Cmaj7 - Em7, acht Takte.
+        /// Bewusst leiser gepegelt (0,68) als die Spielmusik (0,72 bis 0,90).
+        /// </summary>
+        private static byte[] BuildMenu()
+        {
+            var synth = new Synth(606);
+            const double beat = 60.0 / 84.0;
+            double bar = beat * 4;
+            float[] buffer = Synth.CreateBuffer(bar * 8);
+
+            // Arpeggio und Melodie bekommen ihr Echo getrennt vom Rest, sonst
+            // verschwimmt der Bass. Am Ende wird die zweite Spur dazugemischt.
+            float[] sparkle = Synth.CreateBuffer(bar * 8);
+
+            int[][] chords =
+            {
+                new[] { 57, 60, 64, 67 }, // Am7
+                new[] { 53, 57, 60, 64 }, // Fmaj7
+                new[] { 55, 59, 64, 67 }, // Cmaj7 (Grundton liegt im Bass)
+                new[] { 52, 55, 59, 62 }  // Em7
+            };
+            int[] bassRoots = { 45, 41, 48, 40 };
+
+            for (int block = 0; block < 4; block++)
+            {
+                double start = block * bar * 2;
+                int[] chord = chords[block];
+
+                // Fläche: jede Note zweimal, um 0,4 % gegeneinander verstimmt - das
+                // langsame Schweben der beiden ist der ganze Charakter des Stücks.
+                foreach (int note in chord)
+                {
+                    double hz = Synth.NoteToHz(note);
+                    synth.AddTone(buffer, start, bar * 2 * 0.96, hz * 1.004, Wave.Saw, 0.040,
+                        attack: 1.1, decay: 0.5, sustain: 0.85, release: 1.7, lowpassHz: 1050);
+                    synth.AddTone(buffer, start, bar * 2 * 0.96, hz * 0.996, Wave.Saw, 0.040,
+                        attack: 1.3, decay: 0.5, sustain: 0.85, release: 1.7, lowpassHz: 1050);
+                }
+
+                // Bass in halben Noten: Grundton, beim zweiten Schlag eine Oktave höher
+                // nur angedeutet, damit er nicht steht wie eine Wand.
+                for (int half = 0; half < 4; half++)
+                {
+                    double at = start + (half * beat * 2);
+                    synth.AddTone(buffer, at, beat * 1.75, Synth.NoteToHz(bassRoots[block]), Wave.Sine, 0.30,
+                        attack: 0.02, decay: 0.3, sustain: 0.7, release: 0.35, lowpassHz: 650);
+                    synth.AddTone(buffer, at, beat * 1.75, Synth.NoteToHz(bassRoots[block] + 12), Wave.Triangle, 0.06,
+                        attack: 0.02, decay: 0.3, sustain: 0.6, release: 0.35, lowpassHz: 1400);
+                }
+
+                // Arpeggio in Achteln, zwei Oktaven hinauf und wieder hinunter -
+                // genau ein Durchgang über die zwei Takte des Akkords.
+                int[] ladder =
+                {
+                    chord[0], chord[1], chord[2], chord[3],
+                    chord[0] + 12, chord[1] + 12, chord[2] + 12, chord[3] + 12,
+                    chord[3] + 12, chord[2] + 12, chord[1] + 12, chord[0] + 12,
+                    chord[3], chord[2], chord[1], chord[0]
+                };
+
+                for (int step = 0; step < 16; step++)
+                {
+                    synth.AddTone(sparkle, start + (step * beat * 0.5), beat * 0.32, Synth.NoteToHz(ladder[step] + 12), Wave.Triangle, 0.075,
+                        attack: 0.004, decay: 0.09, sustain: 0.4, release: 0.22, lowpassHz: 2600);
+                }
+
+                // Leiser Puls statt Schlagzeug: eine weiche Basstrommel auf 1 und 3,
+                // ein Hauch Hi-Hat auf den Zwischenzählzeiten. 16 Achtel je Block.
+                for (int eighth = 0; eighth < 16; eighth++)
+                {
+                    double at = start + (eighth * beat * 0.5);
+                    if (eighth % 4 == 0)
+                    {
+                        synth.AddKick(buffer, at, 0.28);
+                    }
+                    else if (eighth % 2 == 1)
+                    {
+                        synth.AddHiHat(buffer, at, 0.035);
+                    }
+                }
+            }
+
+            // Sparsame Melodie über alle acht Takte, pentatonisch in a-Moll.
+            // Jede Phrase endet auf einem Akkordton, die letzte führt in den Anfang zurück.
+            (double beatIndex, int note, double beats)[] melody =
+            {
+                (2.0, 76, 1.5), (3.5, 74, 0.5), (4.0, 72, 2.0), (6.0, 69, 2.0),
+                (10.0, 67, 1.0), (11.0, 69, 1.0), (12.0, 72, 3.0),
+                (16.0, 71, 2.0), (18.0, 72, 1.0), (19.0, 74, 1.0), (20.0, 76, 2.5),
+                (24.0, 74, 1.5), (25.5, 71, 0.5), (26.0, 69, 2.0), (28.0, 67, 3.0)
+            };
+
+            foreach ((double beatIndex, int note, double beats) in melody)
+            {
+                double hz = Synth.NoteToHz(note);
+                synth.AddTone(sparkle, beatIndex * beat, beats * beat * 0.85, hz, Wave.Triangle, 0.13,
+                    attack: 0.04, decay: 0.2, sustain: 0.7, release: 0.55, lowpassHz: 2200);
+                synth.AddTone(sparkle, beatIndex * beat, beats * beat * 0.85, hz, Wave.Square, 0.035,
+                    attack: 0.04, decay: 0.2, sustain: 0.6, release: 0.55, pulseWidth: 0.5, lowpassHz: 1600);
+            }
+
+            // Punktiertes Achtel-Echo nur auf Arpeggio und Melodie
+            Synth.AddEcho(sparkle, beat * 0.75, 0.32, 3);
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                buffer[i] += sparkle[i];
+            }
+
+            Synth.Normalize(buffer, 0.68);
+            return Synth.ToWav(buffer);
+        }
 
         /// <summary>
         /// LEICHT - ruhig und warm: weiche Flächen, wandernder Bass, sparsame Melodie,

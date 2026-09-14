@@ -17,11 +17,17 @@
     <None Remove="Tests\**" />
   </ItemGroup>
 
+  <!-- Logos oben links (Snake) und oben rechts (AL), als Ressource in die EXE eingebettet -->
+  <ItemGroup>
+    <Resource Include="Assets\snake-logo.png" />
+    <Resource Include="Assets\al-logo.png" />
+  </ItemGroup>
+
   <!-- Angaben, die Windows im Dateidialog und in den Eigenschaften der EXE anzeigt -->
   <PropertyGroup>
-    <Version>1.3.0</Version>
-    <AssemblyVersion>1.3.0.0</AssemblyVersion>
-    <FileVersion>1.3.0.0</FileVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
     <Product>Snake</Product>
     <Authors>Alexander Last</Authors>
     <Company>Alexander Last</Company>
