@@ -244,7 +244,7 @@
         <!-- Tastenlegende rechts neben dem Feld: Taste hell, Wirkung gedämpft -->
         <Style x:Key="LegendKeyStyle" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Consolas" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="Margin" Value="0,0,12,5" />
@@ -253,7 +253,7 @@
 
         <Style x:Key="LegendTextStyle" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Segoe UI" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
             <Setter Property="Margin" Value="0,0,0,5" />
             <Setter Property="VerticalAlignment" Value="Center" />

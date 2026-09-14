@@ -14,6 +14,12 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // Die Tonprobe ist kein automatischer Test - sie spielt und will gehört werden.
+        if (args.Length > 0 && string.Equals(args[0], "ton", StringComparison.OrdinalIgnoreCase))
+        {
+            return AudioProbe();
+        }
+
         InputBuffering();
         EngineBasics();
         PreviousSnakeSemantics();
@@ -21,6 +27,8 @@ internal static class Program
         StepClockTests();
         FuzzInterpolationInvariant();
         MenuMusicTests();
+        SeamlessLoopTests();
+        IntroTests();
         SettingsTests();
         NoWpfReference();
 
@@ -32,6 +40,94 @@ internal static class Program
         }
 
         return Failures.Count;
+    }
+
+    /// <summary>
+    /// Tonprobe für die Ohren: Ob die Schleife wirklich ohne Loch umläuft, kann kein
+    /// automatischer Test sagen - die winmm-Ausgabe gibt es nur auf einem echten
+    /// Windows mit Soundkarte. Diese Probe spielt vier Stücke, bei denen ein Fehler
+    /// sofort auffällt. Aufruf: ton-pruefen.cmd
+    /// </summary>
+    private static int AudioProbe()
+    {
+        Console.WriteLine("Tonprobe der Musikschleife - bitte hinhören (rund 40 Sekunden).");
+        Console.WriteLine();
+
+        using var music = new WaveOutMusic();
+
+        // Ein Dauerton von 440 Hz, dessen Schleife genau 0,5 s lang ist - das sind
+        // exakt 220 volle Schwingungen. Die Schleife ist damit rechnerisch nahtlos:
+        // Alles, was man an der Nahtstelle hört, kommt von der Ausgabe, nicht vom Ton.
+        var sine = new short[Synth.SampleRate / 2];
+        for (int i = 0; i < sine.Length; i++)
+        {
+            sine[i] = (short)(Math.Sin(2.0 * Math.PI * 440.0 * i / Synth.SampleRate) * 9000);
+        }
+
+        Console.WriteLine("1) Dauerton, 8 Sekunden - die Schleife läuft dabei 16-mal um.");
+        Console.WriteLine("   Richtig ist: ein einziger gleichmäßiger Ton, kein Knacken, kein Stocken.");
+
+        if (!music.Start(sine, Synth.SampleRate, 1, 0.5))
+        {
+            Console.WriteLine("   FEHLER: Windows gibt die Tonausgabe nicht her (waveOut).");
+            Console.WriteLine("   Das Spiel fällt in diesem Fall auf den MediaPlayer zurück.");
+            return 1;
+        }
+
+        Thread.Sleep(8000);
+
+        Console.WriteLine("2) Eine Sekunde Pause, dann weiter - der Ton muss dort weitermachen, wo er aufhörte.");
+        music.Pause();
+        Thread.Sleep(1000);
+        music.Resume();
+        Thread.Sleep(2000);
+
+        Console.WriteLine("3) Lautstärke von leise auf laut und zurück - gleitend, ohne Knacken.");
+        for (int step = 0; step <= 20; step++)
+        {
+            music.SetVolume(step / 20.0);
+            Thread.Sleep(100);
+        }
+
+        for (int step = 20; step >= 4; step--)
+        {
+            music.SetVolume(step / 20.0);
+            Thread.Sleep(100);
+        }
+
+        music.Stop();
+        Thread.Sleep(300);
+
+        // Die echte Menümusik, aber vier Sekunden vor ihrem Ende angesetzt: Die Stelle,
+        // an der früher das Loch war, kommt so schon nach vier Sekunden statt nach 23.
+        byte[] wav = SoundBank.Music(SoundBank.MenuKey);
+        if (!WaveOutMusic.TryReadPcm(wav, out short[] loop, out int sampleRate, out int channels))
+        {
+            Console.WriteLine("   FEHLER: Die Menümusik ließ sich nicht lesen.");
+            return 1;
+        }
+
+        int skip = loop.Length - (sampleRate * 4);
+        var rotated = new short[loop.Length];
+        Array.Copy(loop, skip, rotated, 0, loop.Length - skip);
+        Array.Copy(loop, 0, rotated, loop.Length - skip, skip);
+
+        Console.WriteLine("4) Menümusik, vier Sekunden vor der Wiederholung angesetzt.");
+        Console.WriteLine("   Bei Sekunde 4 kommt die Stelle, an der es vorher gestockt hat.");
+
+        if (!music.Start(rotated, sampleRate, channels, 0.6))
+        {
+            Console.WriteLine("   FEHLER: Tonausgabe ging beim zweiten Anlauf nicht auf.");
+            return 1;
+        }
+
+        Thread.Sleep(12000);
+        music.Stop();
+
+        Console.WriteLine();
+        Console.WriteLine("Fertig. Gehört: 1) gleichmäßiger Ton  2) Pause und Weiterlauf");
+        Console.WriteLine("               3) gleitende Lautstärke  4) Wiederholung ohne Loch?");
+        return 0;
     }
 
     private static void Check(string name, bool condition)
@@ -503,6 +599,279 @@ internal static class Program
 
         Check("Alle sechs Musikschlüssel liefern eine WAV länger als eine Sekunde", allValid);
         Check("Die sechs Stücke sind verschieden lang (kein Schlüssel fällt auf den Standard zurück)", lengths.Count == keys.Length);
+    }
+
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Die Schleife wird nicht mehr vom MediaPlayer zurückgespult, sondern in
+    /// Teilstücken ausgegeben, deren Leseposition im Kreis läuft. Genau diese
+    /// Fülllogik wird hier sample-genau geprüft - sie ist die Stelle, an der die
+    /// hörbare Naht entstehen würde.
+    /// </summary>
+    private static void SeamlessLoopTests()
+    {
+        Section("Musikschleife ohne Naht (1.4.1)");
+
+        // --- WAV lesen ---
+        byte[] wav = SoundBank.Music(SoundBank.MenuKey);
+        bool read = WaveOutMusic.TryReadPcm(wav, out short[] loop, out int sampleRate, out int channels);
+        Check("WAV wird gelesen: 44100 Hz, ein Kanal", read && sampleRate == Synth.SampleRate && channels == 1);
+        Check($"Alle Samples der Datei kommen an ({loop.Length})", loop.Length == (wav.Length - 44) / 2);
+        Check("Zu kurze Daten werden abgelehnt", !WaveOutMusic.TryReadPcm(new byte[] { 1, 2, 3 }, out _, out _, out _));
+
+        byte[] notRiff = (byte[])wav.Clone();
+        notRiff[0] = (byte)'X';
+        Check("Fremde Datei wird abgelehnt", !WaveOutMusic.TryReadPcm(notRiff, out _, out _, out _));
+        Check("Null wird abgelehnt", !WaveOutMusic.TryReadPcm(null!, out _, out _, out _));
+
+        // --- Die Naht selbst: Ende und Anfang stehen im selben Teilstück nebeneinander ---
+        var counted = new short[10];
+        for (int i = 0; i < counted.Length; i++)
+        {
+            counted[i] = (short)(i + 1);
+        }
+
+        var target = new short[10];
+        int position = WaveOutMusic.FillFromLoop(counted, 7, target, 6, 1.0, 1.0);
+        short[] expected = { 8, 9, 10, 1, 2, 3 };
+        bool seamRight = true;
+        for (int i = 0; i < expected.Length; i++)
+        {
+            seamRight &= target[i] == expected[i];
+        }
+
+        Check("Über die Naht: 8 9 10 1 2 3 - kein Loch, kein doppeltes Sample", seamRight);
+        Check("Leseposition läuft im Kreis weiter (3)", position == 3);
+        Check("Leseposition hinter dem Ende wird umgerechnet", WaveOutMusic.FillFromLoop(counted, 25, target, 1, 1.0, 1.0) == 6);
+        Check("Leere Schleife gibt Stille statt Absturz", WaveOutMusic.FillFromLoop(Array.Empty<short>(), 0, target, 4, 1.0, 1.0) == 0 && target[0] == 0);
+
+        // --- Der eigentliche Beweis: zwei volle Umläufe in Teilstücken von 50 ms ---
+        int chunk = Synth.SampleRate * WaveOutMusic.ChunkMs / 1000;
+        Check($"Teilstück teilt die Schleife nicht glatt ({loop.Length} / {chunk}) - die Naht fällt mitten hinein",
+            loop.Length % chunk != 0);
+
+        var staging = new short[chunk];
+        int readPosition = 0;
+        long produced = 0;
+        long total = (2L * loop.Length) + 5000;
+        long firstMismatch = -1;
+
+        while (produced < total)
+        {
+            readPosition = WaveOutMusic.FillFromLoop(loop, readPosition, staging, chunk, 1.0, 1.0);
+
+            for (int i = 0; i < chunk && produced < total; i++, produced++)
+            {
+                if (firstMismatch < 0 && staging[i] != loop[(int)(produced % loop.Length)])
+                {
+                    firstMismatch = produced;
+                }
+            }
+        }
+
+        Check($"Zwei volle Umläufe ({total} Samples) stimmen Sample für Sample mit dem Stück überein"
+            + (firstMismatch < 0 ? string.Empty : $" - erster Fehler bei {firstMismatch}"), firstMismatch < 0);
+
+        // --- Lautstärke ---
+        var loud = new short[] { 1000, -1000, short.MaxValue, short.MinValue };
+        var quiet = new short[4];
+
+        WaveOutMusic.FillFromLoop(loud, 0, quiet, 4, 0.0, 0.0);
+        Check("Lautstärke 0 ergibt Stille", quiet[0] == 0 && quiet[1] == 0 && quiet[2] == 0 && quiet[3] == 0);
+
+        WaveOutMusic.FillFromLoop(loud, 0, quiet, 4, 0.5, 0.5);
+        Check("Lautstärke 0,5 halbiert die Samples", quiet[0] == 500 && quiet[1] == -500);
+
+        WaveOutMusic.FillFromLoop(loud, 0, quiet, 4, 1.0, 1.0);
+        Check("Volle Lautstärke lässt auch die Extremwerte unverändert (kein Überlauf)",
+            quiet[2] == short.MaxValue && quiet[3] == short.MinValue);
+
+        var ramp = new short[100];
+        for (int i = 0; i < ramp.Length; i++)
+        {
+            ramp[i] = 10000;
+        }
+
+        var ramped = new short[100];
+        WaveOutMusic.FillFromLoop(ramp, 0, ramped, 100, 0.0, 1.0);
+        Check("Lautstärkewechsel wird über das Teilstück geführt (kein Knacken)",
+            ramped[0] == 0 && ramped[^1] == 10000 && ramped[50] > ramped[49] && ramped[50] > 4000 && ramped[50] < 6000);
+    }
+
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Das Intro: eine Tonspur, nach der sich die Animation richtet, und ein Sprecher,
+    /// der aus Formanten gebaut ist. Hören kann der Teststand nicht - messen schon:
+    /// Länge, Pegel, Pausen und die Lage der Formanten.
+    /// </summary>
+    private static void IntroTests()
+    {
+        Section("Intro: Tonspur und Sprecher (1.5.0)");
+
+        // --- Fahrplan ---
+        double[] marks =
+        {
+            SoundBank.IntroTimeline.GridIn,
+            SoundBank.IntroTimeline.Crawl,
+            SoundBank.IntroTimeline.Impact,
+            SoundBank.IntroTimeline.Title,
+            SoundBank.IntroTimeline.VoiceSnake,
+            SoundBank.IntroTimeline.Swoosh,
+            SoundBank.IntroTimeline.Subtitle,
+            SoundBank.IntroTimeline.VoiceEdition,
+            SoundBank.IntroTimeline.FadeOut,
+            SoundBank.IntroTimeline.End
+        };
+
+        bool increasing = true;
+        for (int i = 1; i < marks.Length; i++)
+        {
+            increasing &= marks[i] > marks[i - 1];
+        }
+
+        Check("Fahrplan läuft streng vorwärts", increasing);
+        Check("Titel steht nach dem Einschlag, Stimme danach",
+            SoundBank.IntroTimeline.Title > SoundBank.IntroTimeline.Impact
+            && SoundBank.IntroTimeline.VoiceSnake > SoundBank.IntroTimeline.Title);
+
+        byte[] wav = SoundBank.Intro();
+        short[] samples = WavSamples(wav);
+        double seconds = (double)samples.Length / Synth.SampleRate;
+
+        Check($"Tonspur ist länger als das Intro ({seconds:0.00} s für {SoundBank.IntroTimeline.End:0.00} s Bild)",
+            seconds >= SoundBank.IntroTimeline.End);
+
+        double peak = 0.0;
+        foreach (short sample in samples)
+        {
+            peak = Math.Max(peak, Math.Abs(sample / 32767.0));
+        }
+
+        Check($"Ausgesteuert, aber nicht angeschlagen (Spitze {peak:0.000})", peak is > 0.5 and <= 0.95);
+
+        // --- Pegel der Abschnitte: Der Sprecher muss über dem Teppich stehen ---
+        double riser = SectionRms(samples, 0.10, 1.20);
+        double impact = SectionRms(samples, SoundBank.IntroTimeline.Impact, SoundBank.IntroTimeline.Impact + 0.20);
+        double call = SectionRms(samples, SoundBank.IntroTimeline.VoiceSnake + 0.1, SoundBank.IntroTimeline.Swoosh - 0.1);
+        double edition = SectionRms(samples, SoundBank.IntroTimeline.VoiceEdition + 0.1, SoundBank.IntroTimeline.FadeOut - 0.1);
+
+        Check($"Der Aufzug bleibt unter dem Einschlag ({riser:0.000} < {impact:0.000})", riser < impact);
+        Check($"\"Snake\" ist deutlich zu hören (RMS {call:0.000})", call > 0.08);
+        Check($"\"Alexander Last Edition\" ebenso (RMS {edition:0.000})", edition > 0.06);
+        Check($"Beide Ansagen liegen im selben Bereich (Verhältnis {call / edition:0.00})",
+            call / edition is > 0.5 and < 2.0);
+
+        // --- Der Sprecher selbst ---
+        var speech = new Speech(2026);
+        float[] buffer = Synth.CreateBuffer(2.0);
+        var word = new List<Utterance> { new("S", 0.20), new("N", 0.10), new("EY", 0.90), new("K", 0.11) };
+        double spoken = speech.Say(buffer, 0.10, word, 145, 104, 1.0, 0.9);
+
+        Check($"Gesprochene Länge stimmt ({spoken:0.00} s)", Math.Abs(spoken - 1.31) < 0.001);
+        Check("Vor dem ersten Laut ist Stille", BufferRms(buffer, 0.0, 0.09) < 0.001);
+
+        // Im gehaltenen Vokal müssen zwei Formanten stehen: einer um 500 Hz, einer um
+        // 1900 Hz, und dazwischen muss es leiser sein. Genau daran hängt, ob ein Ohr
+        // "Snake" hört und nicht ein Summen.
+        double vowelAt = 0.10 + 0.20 + 0.10 + 0.35;
+        double firstFormant = Goertzel(buffer, vowelAt, 0.05, 500);
+        double valley = Goertzel(buffer, vowelAt, 0.05, 1200);
+        double secondFormant = Goertzel(buffer, vowelAt, 0.05, 1900);
+
+        Check($"Erster Formant steht (500 Hz {firstFormant:0.000} über Tal 1200 Hz {valley:0.000})",
+            firstFormant > valley * 2.0);
+        Check($"Zweiter Formant steht (1900 Hz {secondFormant:0.000} über Tal)", secondFormant > valley);
+
+        // Das "s" lebt oben, der Vokal unten - sonst klingt das "s" wie ein Brummen.
+        double hissHigh = Goertzel(buffer, 0.18, 0.05, 6200);
+        double hissLow = Goertzel(buffer, 0.18, 0.05, 500);
+        Check($"Das \"s\" ist ein Zischen, kein Ton ({hissHigh:0.000} oben gegen {hissLow:0.000} unten)",
+            hissHigh > hissLow);
+
+        // Dunklere Stimme: gleiche Laute, tiefere Formanten.
+        float[] dark = Synth.CreateBuffer(2.0);
+        speech.Say(dark, 0.10, word, 96, 82, 0.90, 0.9);
+        double darkFirst = Goertzel(dark, vowelAt, 0.05, 450);
+        double brightAt450 = Goertzel(buffer, vowelAt, 0.05, 450);
+        Check($"Die dunkle Stimme hat mehr Gewicht unten ({darkFirst:0.000} gegen {brightAt450:0.000})",
+            darkFirst > brightAt450);
+
+        Check("Unbekannte Laute stürzen nicht ab, sie schweigen",
+            speech.Say(Synth.CreateBuffer(0.5), 0.0, new List<Utterance> { new("ÖÖ", 0.2) }, 120, 110) > 0.0);
+
+        Check("Über das Pufferende hinaus wird nichts geschrieben",
+            speech.Say(Synth.CreateBuffer(0.2), 0.15, word, 120, 110) > 0.0);
+    }
+
+    /// <summary>Effektivwert eines Abschnitts der Tonspur (in Sekunden).</summary>
+    private static double SectionRms(short[] samples, double from, double to)
+    {
+        int start = Math.Clamp((int)(from * Synth.SampleRate), 0, samples.Length);
+        int end = Math.Clamp((int)(to * Synth.SampleRate), start, samples.Length);
+        if (end <= start)
+        {
+            return 0.0;
+        }
+
+        double sum = 0.0;
+        for (int i = start; i < end; i++)
+        {
+            double v = samples[i] / 32767.0;
+            sum += v * v;
+        }
+
+        return Math.Sqrt(sum / (end - start));
+    }
+
+    private static double BufferRms(float[] buffer, double from, double to)
+    {
+        int start = Math.Clamp((int)(from * Synth.SampleRate), 0, buffer.Length);
+        int end = Math.Clamp((int)(to * Synth.SampleRate), start, buffer.Length);
+        if (end <= start)
+        {
+            return 0.0;
+        }
+
+        double sum = 0.0;
+        for (int i = start; i < end; i++)
+        {
+            sum += (double)buffer[i] * buffer[i];
+        }
+
+        return Math.Sqrt(sum / (end - start));
+    }
+
+    /// <summary>
+    /// Wie viel Energie steckt an einer einzelnen Frequenz? Der Algorithmus von
+    /// Goertzel rechnet genau einen Punkt der Fourier-Analyse - mehr braucht es
+    /// nicht, um zu prüfen, ob ein Formant an seinem Platz steht.
+    /// </summary>
+    private static double Goertzel(float[] buffer, double atSeconds, double windowSeconds, double frequency)
+    {
+        int start = Math.Clamp((int)(atSeconds * Synth.SampleRate), 0, buffer.Length);
+        int count = Math.Min((int)(windowSeconds * Synth.SampleRate), buffer.Length - start);
+        if (count <= 2)
+        {
+            return 0.0;
+        }
+
+        double coefficient = 2.0 * Math.Cos(2.0 * Math.PI * frequency / Synth.SampleRate);
+        double s1 = 0.0;
+        double s2 = 0.0;
+
+        for (int i = 0; i < count; i++)
+        {
+            // Fensterung, sonst schmieren die Ränder über das ganze Spektrum.
+            double window = 0.5 - (0.5 * Math.Cos(2.0 * Math.PI * i / (count - 1)));
+            double s = (buffer[start + i] * window) + (coefficient * s1) - s2;
+            s2 = s1;
+            s1 = s;
+        }
+
+        double power = (s1 * s1) + (s2 * s2) - (coefficient * s1 * s2);
+        return Math.Sqrt(Math.Max(0.0, power)) / count;
     }
 
     // ------------------------------------------------------------------

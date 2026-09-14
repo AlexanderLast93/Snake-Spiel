@@ -24,7 +24,9 @@
     <Compile Include="..\Game\HighScoreService.cs" Link="Game\HighScoreService.cs" />
     <Compile Include="..\Game\GameSettings.cs" Link="Game\GameSettings.cs" />
     <Compile Include="..\Game\Synth.cs" Link="Game\Synth.cs" />
+    <Compile Include="..\Game\Speech.cs" Link="Game\Speech.cs" />
     <Compile Include="..\Game\SoundBank.cs" Link="Game\SoundBank.cs" />
+    <Compile Include="..\Game\WaveOutMusic.cs" Link="Game\WaveOutMusic.cs" />
   </ItemGroup>
 
 </Project>

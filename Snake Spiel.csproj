@@ -25,13 +25,13 @@
 
   <!-- Angaben, die Windows im Dateidialog und in den Eigenschaften der EXE anzeigt -->
   <PropertyGroup>
-    <Version>1.4.0</Version>
-    <AssemblyVersion>1.4.0.0</AssemblyVersion>
-    <FileVersion>1.4.0.0</FileVersion>
+    <Version>1.5.0</Version>
+    <AssemblyVersion>1.5.0.0</AssemblyVersion>
+    <FileVersion>1.5.0.0</FileVersion>
     <Product>Snake</Product>
     <Authors>Alexander Last</Authors>
     <Company>Alexander Last</Company>
-    <Description>Snake mit offenen Wänden, drei Schwierigkeitsgraden, lokalem Rekord und Musik, die das Programm selbst berechnet.</Description>
+    <Description>Snake mit offenen Wänden, drei Schwierigkeitsgraden, lokalem Rekord, einem gesprochenen Vorspann und Musik, die das Programm selbst berechnet.</Description>
     <Copyright>Copyright (c) 2026 Alexander Last</Copyright>
     <NeutralLanguage>de-DE</NeutralLanguage>
   </PropertyGroup>

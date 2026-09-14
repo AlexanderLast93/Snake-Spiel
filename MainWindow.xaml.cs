@@ -72,8 +72,10 @@ namespace Snake_Spiel
         private static readonly SnakePalette PaletteSlow = new(
             Color.FromRgb(0x8C, 0xD8, 0xFF), Color.FromRgb(0x0B, 0x3F, 0x7A), Color.FromRgb(0x38, 0xBD, 0xF8));
 
+        // NORMAL trägt das Türkis des Schriftzugs im Menü (AccentColor #2DE2D5):
+        // heller Kopf, dunkler Schwanz, der Akzent als Schein.
         private static readonly SnakePalette PaletteNormal = new(
-            Color.FromRgb(0xB6, 0xFF, 0xC4), Color.FromRgb(0x0C, 0x6B, 0x38), Color.FromRgb(0x4A, 0xDE, 0x80));
+            Color.FromRgb(0xBC, 0xFF, 0xF7), Color.FromRgb(0x07, 0x5A, 0x56), Color.FromRgb(0x2D, 0xE2, 0xD5));
 
         private static readonly SnakePalette PaletteFast = new(
             Color.FromRgb(0xFF, 0xF3, 0x9B), Color.FromRgb(0x8A, 0x63, 0x00), Color.FromRgb(0xFA, 0xE0, 0x4C));
@@ -174,7 +176,10 @@ namespace Snake_Spiel
             _sounds.StatusChanged += (_, _) => UpdateSoundStatus();
             LoadSettingsIntoControls();
             UpdateSoundStatus();
-            ShowMenu();
+
+            // Das Menü steht fertig hinter dem Intro - nur seine Musik wartet.
+            ShowMenu(withMusic: false);
+            StartIntro();
         }
 
         /// <summary>Zeigt die Programmversion aus der Projektdatei in Titelzeile und Legende.</summary>
@@ -183,7 +188,7 @@ namespace Snake_Spiel
             Version? version = Assembly.GetExecutingAssembly().GetName().Version;
             if (version != null)
             {
-                string text = $"WPF Edition · v{version.Major}.{version.Minor}.{version.Build}";
+                string text = $"Alexander Last Edition · v{version.Major}.{version.Minor}.{version.Build}";
                 VersionText.Text = text;
                 VersionFooterText.Text = text;
             }
@@ -436,6 +441,9 @@ namespace Snake_Spiel
 
         private enum ViewState
         {
+            /// <summary>Der Vorspann beim Programmstart - liegt über allem und läuft einmal.</summary>
+            Intro,
+
             Menu,
             Running,
             Paused,
@@ -827,7 +835,497 @@ namespace Snake_Spiel
         // Spielablauf
         // ------------------------------------------------------------------
 
-        private void ShowMenu()
+        // ------------------------------------------------------------------
+        // Intro
+        // ------------------------------------------------------------------
+
+        /// <summary>Ein Funke des Intros - eigene kleine Physik, unabhängig vom Spielfeld.</summary>
+        private sealed class IntroSpark
+        {
+            public Ellipse Shape { get; init; } = null!;
+
+            public double X { get; set; }
+
+            public double Y { get; set; }
+
+            public double VelocityX { get; set; }
+
+            public double VelocityY { get; set; }
+
+            public double Size { get; set; }
+
+            public double LifeMs { get; set; }
+
+            public double TotalLifeMs { get; set; }
+        }
+
+        private const int IntroSegments = 13;
+
+        private readonly List<IntroSpark> _introSparks = new();
+        private readonly List<Image> _introBody = new();
+
+        private Image? _introFoodShape;
+        private DispatcherTimer? _introFallback;
+        private double _introSeconds = -1.0;
+        private double _introSegmentSize;
+        private double _introSegmentPad;
+        private double _introFoodPad;
+        private bool _introBuilt;
+        private bool _introImpactDone;
+        private bool _introFinished;
+
+        /// <summary>
+        /// Legt das Intro über das Bild und wartet auf seine Tonspur. Die Uhr des Intros
+        /// beginnt erst zu laufen, wenn der erste Ton tatsächlich kommt - sonst wandert
+        /// das Bild um die Ladezeit der Datei gegen den Ton.
+        /// </summary>
+        private void StartIntro()
+        {
+            _state = ViewState.Intro;
+            _introFinished = false;
+            _introImpactDone = false;
+            _introBuilt = false;
+            _introSeconds = -1.0;
+
+            IntroLayer.Opacity = 1.0;
+            IntroLayer.Visibility = Visibility.Visible;
+            IntroGrid.Opacity = 0.0;
+            IntroTitle.Opacity = 0.0;
+            IntroSubtitle.Opacity = 0.0;
+            IntroFlash.Opacity = 0.0;
+            IntroHint.Opacity = 0.0;
+
+            // Kommt der Ton nicht (kein Gerät, Rechnen fehlgeschlagen), läuft das Intro
+            // nach drei Sekunden trotzdem los - hängen bleiben darf es nie.
+            _introFallback = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.0) };
+            _introFallback.Tick += (_, _) =>
+            {
+                _introFallback?.Stop();
+                if (_introSeconds < 0.0 && !_introFinished)
+                {
+                    BeginIntro(silent: true);
+                }
+            };
+            _introFallback.Start();
+
+            if (_sounds.IsIntroReady)
+            {
+                BeginIntro(silent: false);
+            }
+            else
+            {
+                _sounds.IntroReady += OnIntroReady;
+            }
+        }
+
+        private void OnIntroReady(object? sender, EventArgs e)
+        {
+            _sounds.IntroReady -= OnIntroReady;
+
+            if (!_introFinished && _introSeconds < 0.0)
+            {
+                BeginIntro(silent: false);
+            }
+        }
+
+        /// <summary>Startet Ton und Animation des Intros.</summary>
+        private void BeginIntro(bool silent)
+        {
+            StartLoop();
+
+            if (silent || !_sounds.PlayIntro(() => _introSeconds = 0.0))
+            {
+                _introSeconds = 0.0;
+            }
+        }
+
+        /// <summary>
+        /// Baut Titel, Untertitel, Schlange und Futter des Intros - einmal, sobald das
+        /// Fenster seine Maße kennt. Schrift und Schein stecken in fertigen Bildern,
+        /// damit im laufenden Bild kein Weichzeichner mehr arbeiten muss.
+        /// </summary>
+        private void EnsureIntroVisuals()
+        {
+            double width = IntroLayer.ActualWidth;
+            double height = IntroLayer.ActualHeight;
+
+            if (_introBuilt || width < 200.0 || height < 200.0)
+            {
+                return;
+            }
+
+            _introBuilt = true;
+
+            double resolution = DeviceScale;
+            var accent = (Color)FindResource("AccentColor");
+            var food = (Color)FindResource("FoodColor");
+
+            // Titel und Untertitel
+            double titleSize = Math.Clamp(height * 0.17, 54.0, 190.0);
+            IntroTitle.Source = RenderTextSprite(
+                Spread("SNAKE", " "),
+                titleSize,
+                Color.FromRgb(0xEC, 0xFF, 0xFD),
+                accent,
+                titleSize * 0.38,
+                resolution);
+
+            double subtitleSize = Math.Clamp(titleSize * 0.205, 13.0, 42.0);
+            IntroSubtitle.Source = RenderTextSprite(
+                Spread("ALEXANDER LAST EDITION", " "),
+                subtitleSize,
+                Color.FromRgb(0x86, 0xC9, 0xC4),
+                Color.FromRgb(0x12, 0x7A, 0x76),
+                subtitleSize * 0.75,
+                resolution);
+
+            // Schlange: ein Bild je Glied, Schein steckt schon darin.
+            _introSegmentSize = Math.Clamp(height * 0.042, 16.0, 52.0);
+            IntroCanvas.Children.Clear();
+            _introBody.Clear();
+
+            for (int i = IntroSegments - 1; i >= 0; i--)
+            {
+                double fade = 1.0 - ((double)i / IntroSegments * 0.65);
+                Color fill = i == 0
+                    ? Color.FromRgb(0xD8, 0xFF, 0xFA)
+                    : Color.FromRgb(
+                        (byte)(accent.R * fade),
+                        (byte)(accent.G * fade),
+                        (byte)(accent.B * fade));
+
+                BitmapSource sprite = RenderGlowSprite(
+                    _introSegmentSize,
+                    _introSegmentSize,
+                    _introSegmentSize * 0.34,
+                    _introSegmentSize * (i == 0 ? 1.1 : 0.75),
+                    fill,
+                    accent,
+                    i == 0 ? 1.0 : 0.75,
+                    resolution,
+                    out double pad);
+
+                _introSegmentPad = pad;
+                var image = new Image { Source = sprite, Stretch = Stretch.None, IsHitTestVisible = false };
+                IntroCanvas.Children.Add(image);
+                _introBody.Insert(0, image);
+            }
+
+            // Futter
+            double foodSize = _introSegmentSize * 0.8;
+            _introFoodShape = new Image
+            {
+                Source = RenderGlowSprite(
+                    foodSize,
+                    foodSize,
+                    foodSize / 2.0,
+                    foodSize * 1.5,
+                    food,
+                    food,
+                    1.0,
+                    resolution,
+                    out double foodPad),
+                Stretch = Stretch.None,
+                IsHitTestVisible = false
+            };
+
+            _introFoodPad = foodPad;
+            IntroCanvas.Children.Add(_introFoodShape);
+        }
+
+        /// <summary>
+        /// Rechnet das Intro um ein Bild weiter. Alle Zeitpunkte kommen aus
+        /// <see cref="SoundBank.IntroTimeline"/> - denselben Zahlen, nach denen die
+        /// Tonspur gebaut ist.
+        /// </summary>
+        private void UpdateIntro(double elapsedMs)
+        {
+            EnsureIntroVisuals();
+
+            if (_introSeconds < 0.0 || !_introBuilt)
+            {
+                return;
+            }
+
+            _introSeconds += elapsedMs / 1000.0;
+            double t = _introSeconds;
+            double width = IntroLayer.ActualWidth;
+            double height = IntroLayer.ActualHeight;
+            double middle = height * 0.5;
+
+            // Raster fährt auf
+            double gridIn = Saturate((t - SoundBank.IntroTimeline.GridIn) / 0.85);
+            IntroGrid.Opacity = EaseOut(gridIn) * 0.9;
+            double gridScale = 1.12 - (0.12 * EaseOut(gridIn));
+            IntroGridScale.ScaleX = gridScale;
+            IntroGridScale.ScaleY = gridScale;
+
+            // Schlange kriecht auf das Futter zu
+            double crawl = Saturate(
+                (t - SoundBank.IntroTimeline.Crawl)
+                / (SoundBank.IntroTimeline.Impact - SoundBank.IntroTimeline.Crawl));
+            double headX = (-0.18 * width) + (0.68 * width * EaseInOut(crawl));
+            double afterImpact = Saturate((t - SoundBank.IntroTimeline.Impact) / 0.22);
+            double bodyOpacity = 1.0 - afterImpact;
+
+            for (int i = 0; i < _introBody.Count; i++)
+            {
+                double x = headX - (i * _introSegmentSize * 1.02);
+                double y = middle + (Math.Sin(x / width * Math.PI * 5.0) * height * 0.035);
+
+                Image segment = _introBody[i];
+                segment.Opacity = bodyOpacity;
+                Canvas.SetLeft(segment, x - (_introSegmentSize / 2.0) - _introSegmentPad);
+                Canvas.SetTop(segment, y - (_introSegmentSize / 2.0) - _introSegmentPad);
+            }
+
+            // Futter pulst, bis es gefressen wird
+            if (_introFoodShape != null)
+            {
+                double foodSize = _introSegmentSize * 0.8;
+                double foodX = width * 0.5;
+                double foodY = middle + (Math.Sin(foodX / width * Math.PI * 5.0) * height * 0.035);
+                _introFoodShape.Opacity = bodyOpacity;
+                Canvas.SetLeft(_introFoodShape, foodX - (foodSize / 2.0) - _introFoodPad);
+                Canvas.SetTop(_introFoodShape, foodY - (foodSize / 2.0) - _introFoodPad);
+            }
+
+            // Der Augenblick des Einschlags
+            if (!_introImpactDone && t >= SoundBank.IntroTimeline.Impact)
+            {
+                _introImpactDone = true;
+                double foodX = width * 0.5;
+                double foodY = middle + (Math.Sin(0.5 * Math.PI * 5.0) * height * 0.035);
+                SpawnIntroSparks(foodX, foodY, 64, height);
+                Shake(DeathShakePixels * 0.8, 320.0);
+            }
+
+            IntroFlash.Opacity = _introImpactDone
+                ? Math.Max(0.0, 0.85 - ((t - SoundBank.IntroTimeline.Impact) / 0.34)) * 0.85
+                : 0.0;
+
+            // Titel schlägt ein und atmet danach
+            double titleIn = Saturate((t - SoundBank.IntroTimeline.Title) / 0.26);
+            IntroTitle.Opacity = Saturate(titleIn * 2.2);
+            double titleScale = titleIn < 1.0
+                ? 2.7 - (1.7 * EaseOutBack(titleIn))
+                : 1.0 + (0.012 * Math.Sin((t - SoundBank.IntroTimeline.Title) * 2.6));
+            IntroTitleScale.ScaleX = titleScale;
+            IntroTitleScale.ScaleY = titleScale;
+
+            // Untertitel wischt von links herein
+            if (IntroSubtitle.Source is BitmapSource subtitle)
+            {
+                double wipe = Saturate((t - SoundBank.IntroTimeline.Subtitle) / 0.38);
+                IntroSubtitle.Opacity = Saturate(wipe * 3.0);
+                IntroSubtitleClip.Rect = new Rect(0.0, 0.0, subtitle.Width * EaseOut(wipe), subtitle.Height);
+                IntroSubtitleShift.X = (1.0 - EaseOut(wipe)) * -28.0;
+            }
+
+            IntroHint.Opacity = Saturate((t - 1.6) / 0.8) * 0.75;
+
+            // Abblenden und übergeben
+            if (t >= SoundBank.IntroTimeline.FadeOut)
+            {
+                IntroLayer.Opacity = 1.0 - Saturate(
+                    (t - SoundBank.IntroTimeline.FadeOut)
+                    / (SoundBank.IntroTimeline.End - SoundBank.IntroTimeline.FadeOut));
+            }
+
+            if (t >= SoundBank.IntroTimeline.End)
+            {
+                EndIntro();
+                return;
+            }
+
+            // Das Beben des Spiels mitnehmen
+            IntroShift.X = _boardShake.X;
+            IntroShift.Y = _boardShake.Y;
+
+            UpdateIntroSparks(elapsedMs);
+        }
+
+        /// <summary>Beendet das Intro und übergibt an das Menü samt Menümusik.</summary>
+        private void EndIntro()
+        {
+            if (_introFinished)
+            {
+                return;
+            }
+
+            _introFinished = true;
+            _introSeconds = -1.0;
+
+            _sounds.IntroReady -= OnIntroReady;
+            _sounds.StopIntro();
+            _introFallback?.Stop();
+            _introFallback = null;
+
+            IntroLayer.Visibility = Visibility.Collapsed;
+            IntroLayer.Opacity = 1.0;
+            IntroCanvas.Children.Clear();
+            _introBody.Clear();
+            _introSparks.Clear();
+            _introFoodShape = null;
+
+            ShowMenu();
+        }
+
+        private void IntroLayer_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_state == ViewState.Intro)
+            {
+                EndIntro();
+                e.Handled = true;
+            }
+        }
+
+        private void SpawnIntroSparks(double centerX, double centerY, int count, double height)
+        {
+            Color[] colors =
+            {
+                (Color)FindResource("AccentColor"),
+                (Color)FindResource("FoodColor"),
+                Colors.White
+            };
+
+            double scale = height / 900.0;
+
+            for (int i = 0; i < count; i++)
+            {
+                double angle = _fx.NextDouble() * Math.PI * 2.0;
+                double speed = (160.0 + (_fx.NextDouble() * 620.0)) * scale;
+                double size = (3.0 + (_fx.NextDouble() * 6.0)) * scale;
+                Color color = colors[_fx.Next(colors.Length)];
+
+                var shape = new Ellipse
+                {
+                    Width = size,
+                    Height = size,
+                    Fill = new SolidColorBrush(color),
+                    IsHitTestVisible = false
+                };
+
+                IntroCanvas.Children.Add(shape);
+                _introSparks.Add(new IntroSpark
+                {
+                    Shape = shape,
+                    X = centerX,
+                    Y = centerY,
+                    VelocityX = Math.Cos(angle) * speed,
+                    VelocityY = Math.Sin(angle) * speed,
+                    Size = size,
+                    LifeMs = 700.0 + (_fx.NextDouble() * 500.0),
+                    TotalLifeMs = 1200.0
+                });
+            }
+        }
+
+        private void UpdateIntroSparks(double elapsedMs)
+        {
+            if (_introSparks.Count == 0)
+            {
+                return;
+            }
+
+            double seconds = elapsedMs / 1000.0;
+
+            for (int i = _introSparks.Count - 1; i >= 0; i--)
+            {
+                IntroSpark spark = _introSparks[i];
+                spark.LifeMs -= elapsedMs;
+
+                if (spark.LifeMs <= 0.0)
+                {
+                    IntroCanvas.Children.Remove(spark.Shape);
+                    _introSparks.RemoveAt(i);
+                    continue;
+                }
+
+                spark.VelocityY += 620.0 * seconds;
+                spark.VelocityX *= 0.985;
+                spark.X += spark.VelocityX * seconds;
+                spark.Y += spark.VelocityY * seconds;
+
+                spark.Shape.Opacity = Saturate(spark.LifeMs / spark.TotalLifeMs);
+                Canvas.SetLeft(spark.Shape, spark.X - (spark.Size / 2.0));
+                Canvas.SetTop(spark.Shape, spark.Y - (spark.Size / 2.0));
+            }
+        }
+
+        /// <summary>Schrift samt Schein einmal in ein Bild rechnen - siehe RenderGlowSprite.</summary>
+        private static BitmapSource RenderTextSprite(
+            string text,
+            double fontSize,
+            Color fill,
+            Color glow,
+            double blurRadius,
+            double resolution)
+        {
+            var block = new TextBlock
+            {
+                Text = text,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontWeight = FontWeights.Black,
+                FontSize = fontSize,
+                Foreground = new SolidColorBrush(fill),
+                Effect = new DropShadowEffect
+                {
+                    Color = glow,
+                    BlurRadius = blurRadius,
+                    ShadowDepth = 0,
+                    Opacity = 0.95
+                }
+            };
+
+            TextOptions.SetTextFormattingMode(block, TextFormattingMode.Ideal);
+            block.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+            double pad = Math.Ceiling(blurRadius) + 6.0;
+            double spriteWidth = block.DesiredSize.Width + (2 * pad);
+            double spriteHeight = block.DesiredSize.Height + (2 * pad);
+
+            var canvas = new Canvas { Width = spriteWidth, Height = spriteHeight };
+            Canvas.SetLeft(block, pad);
+            Canvas.SetTop(block, pad);
+            canvas.Children.Add(block);
+            canvas.Measure(new Size(spriteWidth, spriteHeight));
+            canvas.Arrange(new Rect(0, 0, spriteWidth, spriteHeight));
+
+            var bitmap = new RenderTargetBitmap(
+                Math.Max(1, (int)Math.Ceiling(spriteWidth * resolution)),
+                Math.Max(1, (int)Math.Ceiling(spriteHeight * resolution)),
+                96.0 * resolution,
+                96.0 * resolution,
+                PixelFormats.Pbgra32);
+
+            bitmap.Render(canvas);
+            bitmap.Freeze();
+            return bitmap;
+        }
+
+        /// <summary>Setzt zwischen jeden Buchstaben ein Leerzeichen - WPF kennt keine Sperrschrift.</summary>
+        private static string Spread(string text, string gap) => string.Join(gap, text.ToCharArray());
+
+        private static double Saturate(double value) => Math.Clamp(value, 0.0, 1.0);
+
+        private static double EaseOut(double t) => 1.0 - ((1.0 - t) * (1.0 - t));
+
+        private static double EaseInOut(double t) => t * t * (3.0 - (2.0 * t));
+
+        /// <summary>Schwingt kurz über das Ziel hinaus - das gibt dem Einschlag Wucht.</summary>
+        private static double EaseOutBack(double t)
+        {
+            const double overshoot = 1.9;
+            double p = t - 1.0;
+            return 1.0 + (((overshoot + 1.0) * p * p * p) + (overshoot * p * p));
+        }
+
+        /// <param name="withMusic">
+        /// Falsch nur beim Programmstart: Da steht das Menü schon fertig hinter dem Intro,
+        /// seine Musik darf aber erst anlaufen, wenn der Sprecher fertig ist.
+        /// </param>
+        private void ShowMenu(bool withMusic = true)
         {
             StopLoop();
             CancelDeathSequence();
@@ -835,7 +1333,10 @@ namespace Snake_Spiel
 
             // Läuft die Menümusik schon (Rückweg aus den Einstellungen), läuft sie
             // einfach weiter; nach einem Spiel oder beim Start wird sie neu angesetzt.
-            _sounds.EnsureMusic(SoundBank.MenuKey);
+            if (withMusic)
+            {
+                _sounds.EnsureMusic(SoundBank.MenuKey);
+            }
 
             _engine.Reset();
             _engine.FoodLifetimeTicks = 0;
@@ -1093,6 +1594,12 @@ namespace Snake_Spiel
             }
 
             UpdateEffects(elapsedMs);
+
+            if (_state == ViewState.Intro)
+            {
+                UpdateIntro(elapsedMs);
+                return;
+            }
 
             if (_state == ViewState.Running)
             {
@@ -1851,7 +2358,7 @@ namespace Snake_Spiel
         private void UpdateMenuRecords()
         {
             MenuRecordsText.Text =
-                $"Rekorde   leicht {_highScores.GetHighScore(Difficulty.Easy.Key)}   ·   " +
+                $"Highscore:   leicht {_highScores.GetHighScore(Difficulty.Easy.Key)}   ·   " +
                 $"normal {_highScores.GetHighScore(Difficulty.Normal.Key)}   ·   " +
                 $"schnell {_highScores.GetHighScore(Difficulty.Hard.Key)}";
         }
@@ -1985,6 +2492,14 @@ namespace Snake_Spiel
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            // Im Vorspann bricht jede Taste ab - niemand will den beim zehnten Start noch sehen.
+            if (_state == ViewState.Intro)
+            {
+                EndIntro();
+                e.Handled = true;
+                return;
+            }
+
             switch (e.Key)
             {
                 case Key.Left:

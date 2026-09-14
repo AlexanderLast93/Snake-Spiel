@@ -1,6 +1,6 @@
 ﻿# Snake
 
-Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.4.0.
+Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.5.0.
 
 Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Es gibt drei
 Schwierigkeitsgrade, einen lokal gespeicherten Rekord je Grad und Musik, die das Programm
@@ -9,7 +9,7 @@ beim Start selbst berechnet — es wird keine einzige Audiodatei mitgeliefert.
 Alle drei Grade beschleunigen bis zum selben Endtempo von 42 Millisekunden pro Zug. Der
 Unterschied ist allein die Anlaufstrecke: **Langsam** braucht 130 Kugeln dorthin, **Normal** 56,
 **Schnell** 27. Ein Grad ist also kein Deckel, sondern die Frage, wie viel Zeit man zum
-Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, grün, gelb.
+Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, türkis, gelb.
 
 Die Schlange gleitet: Die Spiellogik läuft mit fester Schrittrate, gezeichnet wird mit der
 Bildrate des Monitors, dazwischen wird interpoliert — auch durch die Wände hindurch. Fressen
@@ -20,6 +20,12 @@ steht die Anzeige, rechts die Tastenlegende — auf 16:9 wie auf 16:10 ohne schw
 Die Zellgröße wird in ganzen Pixeln aus dem Platz berechnet (Full HD: 51 px, 2560×1440 bei
 125 %: 55 px), nichts wird gezoomt, Raster und Schrift bleiben scharf. **F11** wechselt ins Fenster
 und zurück; die Wahl wird gespeichert. Im Menü läuft eine eigene, ruhige Musik.
+
+Beim Start kommt der Vorspann: Das Raster fährt auf, die Schlange kriecht durchs Bild und frisst,
+daraus schlägt der Titel ein, und ein Sprecher sagt „Snaaaake — Alexander Last Edition". Die Stimme
+ist keine Aufnahme und auch nicht die Windows-Sprachausgabe, sondern wird aus Formanten gerechnet
+(`Game/Speech.cs`) — Glottisimpulse durch vier parallele Resonatoren, deren Lage den Laut bestimmt.
+Jede Taste überspringt den Vorspann.
 
 Der Neonschein von Schlange, Futter und Feld ist kein Shader-Effekt mehr, sondern wird einmal in
 ein Bitmap gerechnet und als Bild hinter das Objekt gelegt. Auf dem großen Vollbild-Feld hatte der
@@ -73,13 +79,17 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 | `Game/HighScoreService.cs` | Rekord je Grad, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
 | `Game/GameSettings.cs` | Lautstärken und Fenstermodus, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
 | `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Echo, WAV-Ausgabe |
-| `Game/SoundBank.cs` | Die konkreten Klänge und die sechs Musikstücke (Menü, drei Grade, Hardcore, Unmöglich) |
-| `Game/SoundEngine.cs` | Wiedergabe über `MediaPlayer`, Musikschleife, Stummschaltung |
+| `Game/Speech.cs` | Sprachsynthese aus Formanten: der Sprecher im Vorspann, ohne Sprachdatei und ohne Windows-Sprachausgabe |
+| `Game/SoundBank.cs` | Die konkreten Klänge, die sechs Musikstücke (Menü, drei Grade, Hardcore, Unmöglich) und die Tonspur des Vorspanns samt Fahrplan |
+| `Game/SoundEngine.cs` | Wiedergabe: Effekte über `MediaPlayer`, Musik über `WaveOutMusic`, Stummschaltung |
+| `Game/WaveOutMusic.cs` | Musikschleife ohne hörbare Naht: eigene Ausgabe über `waveOut` (winmm), Leseposition läuft im Kreis |
 | `MainWindow.xaml(.cs)` | Fenster, Vollbild, Darstellung mit bildschirmabhängiger Zellgröße, Eingaben |
 | `App.xaml` | Farben und Stile |
 | `Assets/` | Snake-Logo (oben links) und AL-Logo (oben rechts), als Ressource in der EXE |
-| `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr, Interpolation, Menümusik und Einstellungen |
+| `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr, Interpolation, Musik, Schleifennaht und Einstellungen |
 | `pruefen.cmd` | Baut das Spiel und lässt den Teststand laufen; Protokoll in `Claude outputs\pruefung.log` |
+| `ton-pruefen.cmd` | Tonprobe zum Hinhören: Dauerton, Pause, Lautstärke und die Wiederholung der Menümusik |
+| `intro-pruefen.cmd` | Baut, prüft und legt Bildschirmfotos vom Vorspann in `Claude outputs\intro` ab |
 
 Die Spielregeln stecken bewusst in Klassen ohne Oberflächenbezug. Dadurch lassen sie sich ohne
 laufendes Fenster prüfen: `Tests\` ist ein reines Konsolenprojekt, das die Dateien aus `Game\`
@@ -102,7 +112,7 @@ In Visual Studio genügt F5.
 Doppelklick auf `veroeffentlichen.cmd`. Das Skript legt
 
 ```
-release\v1.4.0\Snake.exe
+release\v1.5.0\Snake.exe
 ```
 
 an: eine einzige Datei mit eingebauter .NET-Laufzeit. Sie startet auf jedem 64-Bit-Windows,

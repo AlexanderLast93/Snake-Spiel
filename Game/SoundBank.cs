@@ -203,6 +203,152 @@ namespace Snake_Spiel.Game
         }
 
         // ------------------------------------------------------------------
+        // Intro
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Der Fahrplan des Intros in Sekunden. Bild und Ton laufen nicht zufällig
+        /// zusammen, sondern lesen dieselben Zahlen - wer hier etwas verschiebt,
+        /// verschiebt beides.
+        /// </summary>
+        public static class IntroTimeline
+        {
+            /// <summary>Das Raster fadet auf.</summary>
+            public const double GridIn = 0.00;
+
+            /// <summary>Die Schlange setzt sich in Bewegung.</summary>
+            public const double Crawl = 0.30;
+
+            /// <summary>Sie erreicht das Futter: Einschlag, Blitz, Funken.</summary>
+            public const double Impact = 1.30;
+
+            /// <summary>Der Titel steht.</summary>
+            public const double Title = 1.36;
+
+            /// <summary>"Snaaaake".</summary>
+            public const double VoiceSnake = 1.44;
+
+            /// <summary>Wischer vor dem Untertitel.</summary>
+            public const double Swoosh = 2.82;
+
+            /// <summary>Der Untertitel wischt ein.</summary>
+            public const double Subtitle = 3.00;
+
+            /// <summary>"Alexander Last Edition".</summary>
+            public const double VoiceEdition = 3.08;
+
+            /// <summary>Alles blendet ab.</summary>
+            public const double FadeOut = 5.35;
+
+            /// <summary>Ende: Das Menü übernimmt.</summary>
+            public const double End = 6.00;
+        }
+
+        /// <summary>Schlüssel der Intro-Tonspur.</summary>
+        public const string IntroKey = "intro";
+
+        /// <summary>"Snaaaaaake" - gedehnt, hell, mit fallender Tonhöhe.</summary>
+        private static readonly Utterance[] SnakeCall =
+        {
+            new("S", 0.20), new("N", 0.10), new("EY", 0.90), new("K", 0.11)
+        };
+
+        /// <summary>"Alexander Last Edition" - tiefer und mit größerem Ansatzraum.</summary>
+        private static readonly Utterance[] EditionCall =
+        {
+            // A-lex-an-der
+            new("AE", 0.10), new("L", 0.07), new("IH", 0.06), new("G", 0.06), new("Z", 0.09),
+            new("AE", 0.16), new("N", 0.07), new("D", 0.06), new("ER", 0.20), new("_", 0.10),
+            // Last
+            new("L", 0.09), new("AE", 0.17), new("S", 0.15), new("T", 0.07), new("_", 0.09),
+            // E-di-tion
+            new("IH", 0.08), new("D", 0.06), new("IH", 0.08), new("SH", 0.14), new("AH", 0.06), new("N", 0.15)
+        };
+
+        /// <summary>
+        /// Die Tonspur des Intros in einem Stück: erst ein aufziehendes Rauschen, dann
+        /// der Einschlag, darüber der Sprecher, zum Schluss ein Am7-Teppich, der die
+        /// Menümusik übernimmt (die steht im selben Akkord).
+        /// Ein Stück statt vieler Einzelklänge, damit Bild und Ton nicht auseinanderlaufen.
+        /// </summary>
+        public static byte[] Intro()
+        {
+            var synth = new Synth(909);
+            var voice = new Speech(2026);
+            float[] buffer = Synth.CreateBuffer(6.6);
+
+            double impact = IntroTimeline.Impact;
+
+            // --- Aufzug: ein Ton, der steigt, und ein Rauschen, das breiter wird ---
+            synth.AddTone(buffer, 0.00, impact, 55, Wave.Saw, 0.20,
+                attack: 0.5, decay: 0.2, sustain: 0.9, release: 0.05, endFrequency: 220, lowpassHz: 900, wrap: false);
+            synth.AddTone(buffer, 0.00, impact, 110, Wave.Triangle, 0.14,
+                attack: 0.7, decay: 0.2, sustain: 0.9, release: 0.05, endFrequency: 440, lowpassHz: 1600, wrap: false);
+
+            // Das Rauschen wird in Stufen heller und lauter - ein Filterfahrt zu Fuß.
+            for (int step = 0; step < 13; step++)
+            {
+                double at = step * (impact / 13.0);
+                double progress = step / 12.0;
+                synth.AddTone(buffer, at, impact / 13.0 * 1.6, 1, Wave.Noise, 0.09 + (0.34 * progress * progress),
+                    attack: 0.02, decay: 0.05, sustain: 0.9, release: 0.05,
+                    lowpassHz: 700 + (7000 * progress * progress), wrap: false);
+            }
+
+            // Wirbel, der sich verdichtet: von 150 ms Abstand auf 35 ms.
+            double tick = 0.06;
+            double spacing = 0.150;
+            while (tick < impact - 0.02)
+            {
+                double progress = tick / impact;
+                synth.AddHiHat(buffer, tick, 0.08 + (0.26 * progress));
+                tick += spacing;
+                spacing = Math.Max(0.035, spacing * 0.86);
+            }
+
+            // --- Einschlag ---
+            synth.AddKick(buffer, impact, 1.0);
+            synth.AddTone(buffer, impact, 0.55, 95, Wave.Sine, 0.55,
+                attack: 0.001, decay: 0.25, sustain: 0.5, release: 0.5, endFrequency: 32, wrap: false);
+            synth.AddTone(buffer, impact, 0.45, 1, Wave.Noise, 0.30,
+                attack: 0.001, decay: 0.2, sustain: 0.35, release: 0.7, lowpassHz: 9000, wrap: false);
+
+            // Akkord zum Einschlag: a-Moll, damit es zur Menümusik passt.
+            foreach (int note in new[] { 45, 52, 57 })
+            {
+                synth.AddTone(buffer, impact, 0.9, Synth.NoteToHz(note), Wave.Saw, 0.09,
+                    attack: 0.004, decay: 0.3, sustain: 0.5, release: 0.8, lowpassHz: 1800, wrap: false);
+            }
+
+            // --- Teppich unter dem Sprecher: tief und sehr zurückhaltend ---
+            synth.AddTone(buffer, impact, IntroTimeline.FadeOut - impact, Synth.NoteToHz(33), Wave.Sine, 0.085,
+                attack: 0.1, decay: 0.3, sustain: 0.85, release: 0.8, lowpassHz: 400, wrap: false);
+            synth.AddTone(buffer, impact, IntroTimeline.FadeOut - impact, Synth.NoteToHz(45), Wave.Saw, 0.035,
+                attack: 0.4, decay: 0.3, sustain: 0.8, release: 0.8, lowpassHz: 900, wrap: false);
+
+            // --- Sprecher ---
+            voice.Say(buffer, IntroTimeline.VoiceSnake, SnakeCall, 145, 104, 1.00, 1.05);
+
+            // Wischer vor dem Untertitel
+            synth.AddTone(buffer, IntroTimeline.Swoosh, 0.22, 1, Wave.Noise, 0.20,
+                attack: 0.14, decay: 0.06, sustain: 0.5, release: 0.22, lowpassHz: 4200, wrap: false);
+            synth.AddKick(buffer, IntroTimeline.Subtitle, 0.55);
+
+            // Tiefer und größer: gleiche Laute, andere Stimme.
+            voice.Say(buffer, IntroTimeline.VoiceEdition, EditionCall, 96, 82, 0.90, 1.50);
+
+            // --- Ausklang: Am7, der Anfangsakkord der Menümusik ---
+            foreach (int note in new[] { 45, 57, 60, 64, 67 })
+            {
+                synth.AddTone(buffer, IntroTimeline.FadeOut - 0.25, 0.5, Synth.NoteToHz(note), Wave.Saw, 0.055,
+                    attack: 0.25, decay: 0.2, sustain: 0.7, release: 0.55, lowpassHz: 1200, wrap: false);
+            }
+
+            Synth.Normalize(buffer, 0.92);
+            return Synth.ToWav(buffer);
+        }
+
+        // ------------------------------------------------------------------
         // Musik
         // ------------------------------------------------------------------
 

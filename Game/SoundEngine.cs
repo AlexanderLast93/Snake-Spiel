@@ -15,6 +15,10 @@ namespace Snake_Spiel.Game
     /// WAV in den Temp-Ordner geschrieben, weil <see cref="MediaPlayer"/> Dateien braucht -
     /// dafür können Musik und Effekte gleichzeitig laufen, was mit System.Media.SoundPlayer
     /// nicht geht (der spielt pro Prozess immer nur einen Klang).
+    /// Die Effekte laufen über <see cref="MediaPlayer"/>; die Musik läuft über
+    /// <see cref="WaveOutMusic"/>, weil der MediaPlayer zum Wiederholen zurückspult und
+    /// dabei ein hörbares Loch in die Schleife reißt. Geht die Tonausgabe darüber nicht
+    /// auf, fällt die Musik auf den MediaPlayer zurück.
     /// Schlägt irgendetwas fehl, spielt das Spiel stumm weiter und meldet es über
     /// <see cref="StatusText"/>.
     /// </summary>
@@ -32,9 +36,13 @@ namespace Snake_Spiel.Game
         private readonly Dispatcher _dispatcher;
         private readonly Dictionary<string, string> _effectFiles = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _musicFiles = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, MusicClip> _musicClips = new(StringComparer.Ordinal);
         private readonly Dictionary<string, MediaPlayer> _effectPlayers = new(StringComparer.Ordinal);
 
+        private WaveOutMusic? _music;
         private MediaPlayer? _musicPlayer;
+        private MediaPlayer? _introPlayer;
+        private string? _introFile;
         private string? _currentMusic;
         private string? _pendingMusic;
         private bool _musicPaused;
@@ -67,6 +75,16 @@ namespace Snake_Spiel.Game
         /// <summary>Wird gesetzt, sobald sich <see cref="StatusText"/> geändert hat.</summary>
         public event EventHandler? StatusChanged;
 
+        /// <summary>Die Intro-Tonspur ist gerechnet und kann gespielt werden.</summary>
+        public bool IsIntroReady => _introFile != null;
+
+        /// <summary>
+        /// Wird auf dem Oberflächen-Thread ausgelöst, sobald die Intro-Tonspur fertig
+        /// gerechnet ist - sie wird vor allem anderen gebaut, damit das Intro nicht
+        /// auf die Musik warten muss.
+        /// </summary>
+        public event EventHandler? IntroReady;
+
         public void SetMuted(bool muted)
         {
             _settings.SetMuted(muted);
@@ -91,6 +109,13 @@ namespace Snake_Spiel.Game
         /// <summary>Überträgt die eingestellten Lautstärken auf alles, was gerade spielt.</summary>
         private void ApplyVolumes()
         {
+            _music?.SetVolume(IsMuted ? 0.0 : MusicVolume);
+
+            if (_introPlayer != null)
+            {
+                _introPlayer.Volume = IsMuted ? 0.0 : MusicVolume;
+            }
+
             if (_musicPlayer != null)
             {
                 _musicPlayer.Volume = IsMuted ? 0.0 : MusicVolume;
@@ -134,6 +159,73 @@ namespace Snake_Spiel.Game
             {
                 Fail(ex);
             }
+        }
+
+        /// <summary>
+        /// Spielt die Tonspur des Intros einmal ab. <paramref name="onStarted"/> wird in
+        /// dem Augenblick gerufen, in dem der erste Ton läuft - daran hängt die Animation,
+        /// sonst laufen Bild und Ton um die Ladezeit der Datei auseinander.
+        /// Bei stummem Ton läuft das Intro trotzdem, nur eben lautlos.
+        /// </summary>
+        public bool PlayIntro(Action onStarted)
+        {
+            if (_disposed || _introFile == null)
+            {
+                return false;
+            }
+
+            if (IsMuted)
+            {
+                onStarted();
+                return true;
+            }
+
+            try
+            {
+                StopIntro();
+
+                var player = new MediaPlayer { Volume = MusicVolume };
+                player.MediaOpened += (_, _) =>
+                {
+                    player.Play();
+                    onStarted();
+                };
+                player.MediaFailed += (_, e) =>
+                {
+                    Fail(e.ErrorException);
+                    onStarted();
+                };
+
+                player.Open(new Uri(_introFile));
+                _introPlayer = player;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Fail(ex);
+                return false;
+            }
+        }
+
+        /// <summary>Bricht das Intro ab (Überspringen oder Programmende).</summary>
+        public void StopIntro()
+        {
+            if (_introPlayer == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _introPlayer.Stop();
+                _introPlayer.Close();
+            }
+            catch (Exception)
+            {
+                // Beim Aufräumen ist ein Fehler nicht der Rede wert.
+            }
+
+            _introPlayer = null;
         }
 
         /// <summary>Schlüssel der Musik, die gerade läuft oder pausiert - sonst null.</summary>
@@ -181,10 +273,25 @@ namespace Snake_Spiel.Game
                 return;
             }
 
+            StopMusic();
+
+            // Erster Weg: eigene Schleife über waveOut - sie hat kein Ende, das
+            // zurückgespult werden müsste, und damit keine hörbare Naht.
+            if (_musicClips.TryGetValue(difficultyKey, out MusicClip clip))
+            {
+                _music ??= new WaveOutMusic();
+
+                if (_music.Start(clip.Samples, clip.SampleRate, clip.Channels, IsMuted ? 0.0 : MusicVolume))
+                {
+                    _currentMusic = difficultyKey;
+                    _musicPaused = false;
+                    return;
+                }
+            }
+
             try
             {
-                StopMusic();
-
+                // Rückfall: MediaPlayer mit Endlos-Zeitleiste (hörbare Naht, aber besser als Stille).
                 _musicPlayer = new MediaPlayer { Volume = IsMuted ? 0.0 : MusicVolume };
                 _musicPlayer.MediaFailed += (_, e) => Fail(e.ErrorException);
 
@@ -209,7 +316,19 @@ namespace Snake_Spiel.Game
 
         public void PauseMusic()
         {
-            if (_musicPlayer?.Clock?.Controller == null || _musicPaused)
+            if (_musicPaused)
+            {
+                return;
+            }
+
+            if (_music is { IsRunning: true })
+            {
+                _music.Pause();
+                _musicPaused = true;
+                return;
+            }
+
+            if (_musicPlayer?.Clock?.Controller == null)
             {
                 return;
             }
@@ -227,7 +346,19 @@ namespace Snake_Spiel.Game
 
         public void ResumeMusic()
         {
-            if (_musicPlayer?.Clock?.Controller == null || !_musicPaused)
+            if (!_musicPaused)
+            {
+                return;
+            }
+
+            if (_music is { IsRunning: true })
+            {
+                _music.Resume();
+                _musicPaused = false;
+                return;
+            }
+
+            if (_musicPlayer?.Clock?.Controller == null)
             {
                 return;
             }
@@ -247,8 +378,12 @@ namespace Snake_Spiel.Game
         {
             _pendingMusic = null;
 
+            _music?.Stop();
+
             if (_musicPlayer == null)
             {
+                _currentMusic = null;
+                _musicPaused = false;
                 return;
             }
 
@@ -276,6 +411,15 @@ namespace Snake_Spiel.Game
                 string directory = Path.Combine(Path.GetTempPath(), "SnakeSpiel", "audio");
                 Directory.CreateDirectory(directory);
 
+                // Das Intro zuerst: Es wird als Erstes gebraucht, alles andere hat Zeit,
+                // solange der Sprecher redet.
+                string intro = WriteWav(directory, "intro", SoundBank.Intro());
+                _dispatcher.Invoke(() =>
+                {
+                    _introFile = intro;
+                    IntroReady?.Invoke(this, EventArgs.Empty);
+                });
+
                 var effects = new (string Key, Func<byte[]> Build)[]
                 {
                     (EffectStart, SoundBank.Start),
@@ -294,15 +438,12 @@ namespace Snake_Spiel.Game
 
                 foreach (Difficulty difficulty in Difficulty.All)
                 {
-                    _musicFiles[difficulty.Key] = WriteWav(
-                        directory,
-                        "music_" + difficulty.Key,
-                        SoundBank.Music(difficulty.Key));
+                    AddMusic(directory, difficulty.Key);
                 }
 
                 foreach (string extra in new[] { SoundBank.MenuKey, SoundBank.HardcoreKey, SoundBank.ImpossibleKey })
                 {
-                    _musicFiles[extra] = WriteWav(directory, "music_" + extra, SoundBank.Music(extra));
+                    AddMusic(directory, extra);
                 }
 
                 // MediaPlayer gehört dem Oberflächen-Thread.
@@ -324,6 +465,24 @@ namespace Snake_Spiel.Game
                 _dispatcher.Invoke(() => Fail(ex));
             }
         }
+
+        /// <summary>
+        /// Rechnet ein Musikstück, legt es als Datei ab (für den Rückfall auf den
+        /// MediaPlayer) und behält die Samples im Speicher (für die nahtlose Schleife).
+        /// </summary>
+        private void AddMusic(string directory, string key)
+        {
+            byte[] wav = SoundBank.Music(key);
+            _musicFiles[key] = WriteWav(directory, "music_" + key, wav);
+
+            if (WaveOutMusic.TryReadPcm(wav, out short[] samples, out int sampleRate, out int channels))
+            {
+                _musicClips[key] = new MusicClip(samples, sampleRate, channels);
+            }
+        }
+
+        /// <summary>Ein fertig gerechnetes Musikstück als Samples.</summary>
+        private readonly record struct MusicClip(short[] Samples, int SampleRate, int Channels);
 
         /// <summary>
         /// Schreibt die Daten unter einem Namen, der ihren Inhalt kennzeichnet. Damit
@@ -374,7 +533,11 @@ namespace Snake_Spiel.Game
             }
 
             _disposed = true;
+            StopIntro();
             StopMusic();
+
+            _music?.Dispose();
+            _music = null;
 
             foreach (MediaPlayer player in _effectPlayers.Values)
             {
