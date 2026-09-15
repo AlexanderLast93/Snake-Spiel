@@ -3,9 +3,9 @@
 namespace Snake_Spiel.Game
 {
     /// <summary>
-    /// Sämtliche Klänge des Spiels als fertige WAV-Daten - Effekte und die sechs
-    /// Musikschleifen (Menü, drei Grade, Hardcore, Unmöglich). Alles wird gerechnet,
-    /// nichts wird mitgeliefert.
+    /// Sämtliche Klänge des Spiels als fertige WAV-Daten - Effekte und die sieben
+    /// Musikschleifen (Menü, drei Grade, Hardcore, Unmöglich, Verflucht). Alles wird
+    /// gerechnet, nichts wird mitgeliefert.
     /// Die Musikstücke sind so gebaut, dass sie sich nahtlos wiederholen.
     /// </summary>
     public static class SoundBank
@@ -28,6 +28,97 @@ namespace Snake_Spiel.Game
                 attack: 0.002, decay: 0.03, sustain: 0.5, release: 0.09);
 
             Synth.Normalize(buffer, 0.88);
+            return Synth.ToWav(buffer);
+        }
+
+        /// <summary>
+        /// Ein Grabstein wird eingesammelt - die Fassung für die Stufe Verflucht.
+        /// Statt des hellen Doppel-Blips: ein kurzes Schaben von Stein, ein dumpfer
+        /// Schlag und darüber eine kleine Glocke. Muss so kurz bleiben wie das
+        /// Original (0,3 s), sonst überlagern sich bei drei Happen in zwei Sekunden
+        /// die Klänge zu Brei.
+        /// </summary>
+        public static byte[] CursedEat()
+        {
+            var synth = new Synth(21);
+            float[] buffer = Synth.CreateBuffer(0.40);
+
+            // Stein auf Stein: ein ganz kurzes Reiben
+            synth.AddTone(buffer, 0.00, 0.05, 1, Wave.Noise, 0.30,
+                attack: 0.004, decay: 0.03, sustain: 0.45, release: 0.07, lowpassHz: 2100, wrap: false);
+
+            // Der Schlag darunter - kürzer und höher als beim Grabstein-Klang,
+            // damit er sich nicht wie ein Fehler anfühlt.
+            synth.AddTone(buffer, 0.01, 0.06, 150, Wave.Sine, 0.65,
+                attack: 0.001, decay: 0.04, sustain: 0.3, release: 0.14, endFrequency: 62, wrap: false);
+
+            // Und eine kleine Glocke, damit es nach Belohnung klingt und nicht nach Sturz.
+            synth.AddBell(buffer, 0.02, Synth.NoteToHz(69), 0.34, 0.85, wrap: false);
+
+            Synth.Normalize(buffer, 0.86);
+            return Synth.ToWav(buffer);
+        }
+
+        /// <summary>
+        /// Neues Level in der Stufe Verflucht: keine Fanfare, sondern zwei Glockenschläge
+        /// in der kleinen Terz - dem Intervall, das jede Glocke ohnehin mitbringt und das
+        /// die ganze Friedhofsmusik trägt. Dazu ein Luftzug, der aufzieht. Es klingt wie
+        /// ein Fortschritt, den man nicht unbedingt haben wollte.
+        /// </summary>
+        public static byte[] CursedLevelUp()
+        {
+            var synth = new Synth(22);
+            float[] buffer = Synth.CreateBuffer(1.40);
+
+            synth.AddBell(buffer, 0.00, Synth.NoteToHz(50), 0.40, 1.30, wrap: false);
+            synth.AddBell(buffer, 0.17, Synth.NoteToHz(53), 0.34, 1.10, wrap: false);
+
+            // Luftzug, der zwischen den Schlägen aufzieht
+            synth.AddTone(buffer, 0.02, 0.55, 1, Wave.Noise, 0.10,
+                attack: 0.28, decay: 0.2, sustain: 0.7, release: 0.5, lowpassHz: 700, wrap: false);
+
+            // Tiefer Sinus als Boden - derselbe Grundton wie die Drone der Friedhofsmusik
+            synth.AddTone(buffer, 0.00, 0.70, Synth.NoteToHz(26), Wave.Sine, 0.30,
+                attack: 0.03, decay: 0.25, sustain: 0.65, release: 0.55, wrap: false);
+
+            Synth.Normalize(buffer, 0.80);
+            return Synth.ToWav(buffer);
+        }
+
+        /// <summary>
+        /// Neuer Rekord in der Stufe Verflucht. Der helle Dur-Dreiklang der normalen
+        /// Fanfare wäre hier ein Bruch: Man hat sich im Dunkeln etwas erkämpft, nicht
+        /// im Sonnenschein gewonnen. Stattdessen drei Glocken, die einen d-Moll-Dreiklang
+        /// hinaufsteigen, darunter ein anschwellender Chor und ein einzelner hoher Ton,
+        /// der stehen bleibt. Es klingt feierlich - nur eben auf einem Friedhof.
+        /// </summary>
+        public static byte[] CursedNewRecord()
+        {
+            var synth = new Synth(23);
+            float[] buffer = Synth.CreateBuffer(2.60);
+
+            // d - f - a: derselbe Dreiklang, auf dem die ganze Friedhofsmusik steht.
+            synth.AddBell(buffer, 0.00, Synth.NoteToHz(50), 0.42, 2.20, wrap: false);
+            synth.AddBell(buffer, 0.26, Synth.NoteToHz(53), 0.38, 2.00, wrap: false);
+            synth.AddBell(buffer, 0.52, Synth.NoteToHz(57), 0.34, 1.90, wrap: false);
+
+            // Chor, der unter den Glocken anschwillt und stehen bleibt
+            foreach (int note in new[] { 38, 50, 53, 57, 62 })
+            {
+                synth.AddTone(buffer, 0.10, 1.60, Synth.NoteToHz(note), Wave.Saw, 0.075,
+                    attack: 0.55, decay: 0.4, sustain: 0.85, release: 0.85, lowpassHz: 1500, wrap: false);
+            }
+
+            // Ein Schlag auf der Eins, damit der Augenblick Gewicht hat
+            synth.AddTone(buffer, 0.00, 0.14, 96, Wave.Sine, 0.60,
+                attack: 0.001, decay: 0.08, sustain: 0.3, release: 0.35, endFrequency: 36, wrap: false);
+
+            // Und ganz oben ein einzelner Ton, der als Letztes verklingt - das
+            // Gegenstück zum Funkeln der hellen Fanfare, nur einsam statt jubelnd.
+            synth.AddTone(buffer, 0.78, 1.30, Synth.NoteToHz(86), Wave.Triangle, 0.075,
+                attack: 0.25, decay: 0.4, sustain: 0.7, release: 0.7, wrap: false);
+
+            Synth.Normalize(buffer, 0.84);
             return Synth.ToWav(buffer);
         }
 
@@ -202,6 +293,113 @@ namespace Snake_Spiel.Game
             return Synth.ToWav(buffer);
         }
 
+        /// <summary>
+        /// Der Lauf wird verflucht: eine Grabglocke, ein Sturz ins Bodenlose und ein
+        /// Chor, der von unten kommt. Alles ohne Umlauf - die Ausklänge sollen hinten
+        /// verschwinden und nicht vorne wieder anfangen.
+        /// </summary>
+        public static byte[] CursedAlarm()
+        {
+            var synth = new Synth(18);
+            float[] buffer = Synth.CreateBuffer(3.20);
+
+            // Die Glocke schlägt zuerst, alles andere kommt aus ihrem Nachhall.
+            synth.AddBell(buffer, 0.00, Synth.NoteToHz(50), 0.62, 2.60, wrap: false);
+
+            // Ein Ton, der einfach nach unten wegkippt und nicht mehr zurückkommt
+            synth.AddTone(buffer, 0.05, 1.30, 240, Wave.Saw, 0.30,
+                attack: 0.02, decay: 0.4, sustain: 0.7, release: 0.9, endFrequency: 27,
+                lowpassHz: 900, wrap: false);
+
+            // Luftzug: Rauschen, das aufzieht und wieder abfällt
+            synth.AddTone(buffer, 0.10, 1.60, 1, Wave.Noise, 0.16,
+                attack: 0.7, decay: 0.4, sustain: 0.8, release: 0.9, lowpassHz: 500, wrap: false);
+
+            // Chor von unten: Grundton, kleine Sekunde, Tritonus - die drei Intervalle,
+            // die zusammen nach Kirche und nach Unheil gleichzeitig klingen.
+            foreach (int note in new[] { 38, 39, 44, 50, 51 })
+            {
+                synth.AddTone(buffer, 0.70, 1.40, Synth.NoteToHz(note), Wave.Saw, 0.13,
+                    attack: 0.35, decay: 0.4, sustain: 0.85, release: 0.9, lowpassHz: 1100, wrap: false);
+            }
+
+            // Zwei dumpfe Schläge wie Erde auf Holz
+            synth.AddTone(buffer, 1.60, 0.14, 86, Wave.Sine, 0.70,
+                attack: 0.001, decay: 0.08, sustain: 0.3, release: 0.30, endFrequency: 33, wrap: false);
+            synth.AddTone(buffer, 2.00, 0.14, 78, Wave.Sine, 0.55,
+                attack: 0.001, decay: 0.08, sustain: 0.3, release: 0.35, endFrequency: 30, wrap: false);
+
+            Synth.Normalize(buffer, 0.94);
+            return Synth.ToWav(buffer);
+        }
+
+        /// <summary>
+        /// Durchgespielt. Der einzige Klang im ganzen Spiel, der in Dur steht: dieselbe
+        /// Glocke wie im Fluch, nur auf einem Dur-Dreiklang - der Fluch ist gebrochen.
+        /// Fanfare, Paukenwirbel, Becken, und darunter ein Akkord, der einfach stehen bleibt.
+        /// </summary>
+        public static byte[] Victory()
+        {
+            var synth = new Synth(19);
+            float[] buffer = Synth.CreateBuffer(6.00);
+
+            // Einschlag: Pauke, Sub und Becken auf der Eins
+            synth.AddTone(buffer, 0.00, 0.22, 120, Wave.Sine, 0.85,
+                attack: 0.001, decay: 0.10, sustain: 0.35, release: 0.45, endFrequency: 44, wrap: false);
+            synth.AddTone(buffer, 0.00, 0.60, 1, Wave.Noise, 0.26,
+                attack: 0.002, decay: 0.25, sustain: 0.30, release: 1.20, lowpassHz: 9000, wrap: false);
+
+            // Paukenwirbel davor wäre schön, geht aber nicht rückwärts - also
+            // stattdessen ein Wirbel, der in den zweiten Akkord hineinführt.
+            for (int i = 0; i < 14; i++)
+            {
+                double at = 0.62 + (i * 0.032);
+                synth.AddTone(buffer, at, 0.03, 92, Wave.Sine, 0.10 + (0.30 * i / 13.0),
+                    attack: 0.001, decay: 0.02, sustain: 0.3, release: 0.06, endFrequency: 60, wrap: false);
+            }
+
+            // Fanfare in D-Dur, punktiert: d - fis - a - d'
+            (double At, int Note, double Length)[] fanfare =
+            {
+                (0.06, 62, 0.26), (0.34, 66, 0.16), (0.52, 69, 0.16), (0.72, 74, 0.34)
+            };
+
+            foreach ((double at, int note, double length) in fanfare)
+            {
+                synth.AddTone(buffer, at, length, Synth.NoteToHz(note), Wave.Saw, 0.26,
+                    attack: 0.006, decay: 0.06, sustain: 0.8, release: 0.20, lowpassHz: 4200, wrap: false);
+                synth.AddTone(buffer, at, length, Synth.NoteToHz(note - 12), Wave.Square, 0.11,
+                    attack: 0.006, decay: 0.06, sustain: 0.8, release: 0.20, pulseWidth: 0.32, wrap: false);
+            }
+
+            // Der große Akkord ab 1,06 s - D-Dur über fünf Oktaven, der stehen bleibt
+            synth.AddTone(buffer, 1.06, 0.30, 140, Wave.Sine, 0.80,
+                attack: 0.001, decay: 0.12, sustain: 0.4, release: 0.60, endFrequency: 48, wrap: false);
+            synth.AddTone(buffer, 1.06, 0.50, 1, Wave.Noise, 0.22,
+                attack: 0.002, decay: 0.30, sustain: 0.30, release: 2.20, lowpassHz: 11000, wrap: false);
+
+            foreach (int note in new[] { 38, 50, 57, 62, 66, 69, 74, 78 })
+            {
+                synth.AddTone(buffer, 1.06, 2.60, Synth.NoteToHz(note), Wave.Saw, 0.085,
+                    attack: 0.03, decay: 0.5, sustain: 0.80, release: 1.90, lowpassHz: 3400, wrap: false);
+            }
+
+            // Die Glocke des Fluchs, diesmal in Dur
+            synth.AddBell(buffer, 1.10, Synth.NoteToHz(62), 0.34, 4.20, wrap: false);
+            synth.AddBell(buffer, 2.30, Synth.NoteToHz(69), 0.22, 3.40, wrap: false);
+
+            // Funkeln obendrauf: ein Arpeggio, das nach oben davonfliegt
+            int[] sparkle = { 74, 78, 81, 86, 90, 93 };
+            for (int i = 0; i < sparkle.Length; i++)
+            {
+                synth.AddTone(buffer, 1.30 + (i * 0.10), 0.09, Synth.NoteToHz(sparkle[i]), Wave.Triangle, 0.17,
+                    attack: 0.002, decay: 0.04, sustain: 0.5, release: 0.55, wrap: false);
+            }
+
+            Synth.Normalize(buffer, 0.95);
+            return Synth.ToWav(buffer);
+        }
+
         // ------------------------------------------------------------------
         // Intro
         // ------------------------------------------------------------------
@@ -225,8 +423,8 @@ namespace Snake_Spiel.Game
             /// <summary>Der Titel steht.</summary>
             public const double Title = 1.36;
 
-            /// <summary>"Snaaaake".</summary>
-            public const double VoiceSnake = 1.44;
+            /// <summary>Die Fanfare steigt auf - der Titel atmet dazu.</summary>
+            public const double Hook = 1.51;
 
             /// <summary>Wischer vor dem Untertitel.</summary>
             public const double Swoosh = 2.82;
@@ -234,8 +432,8 @@ namespace Snake_Spiel.Game
             /// <summary>Der Untertitel wischt ein.</summary>
             public const double Subtitle = 3.00;
 
-            /// <summary>"Alexander Last Edition".</summary>
-            public const double VoiceEdition = 3.08;
+            /// <summary>Die Antwortphrase unter dem stehenden Untertitel.</summary>
+            public const double Answer = 3.43;
 
             /// <summary>Alles blendet ab.</summary>
             public const double FadeOut = 5.35;
@@ -247,37 +445,37 @@ namespace Snake_Spiel.Game
         /// <summary>Schlüssel der Intro-Tonspur.</summary>
         public const string IntroKey = "intro";
 
-        /// <summary>"Snaaaaaake" - gedehnt, hell, mit fallender Tonhöhe.</summary>
-        private static readonly Utterance[] SnakeCall =
-        {
-            new("S", 0.20), new("N", 0.10), new("EY", 0.90), new("K", 0.11)
-        };
-
-        /// <summary>"Alexander Last Edition" - tiefer und mit größerem Ansatzraum.</summary>
-        private static readonly Utterance[] EditionCall =
-        {
-            // A-lex-an-der
-            new("AE", 0.10), new("L", 0.07), new("IH", 0.06), new("G", 0.06), new("Z", 0.09),
-            new("AE", 0.16), new("N", 0.07), new("D", 0.06), new("ER", 0.20), new("_", 0.10),
-            // Last
-            new("L", 0.09), new("AE", 0.17), new("S", 0.15), new("T", 0.07), new("_", 0.09),
-            // E-di-tion
-            new("IH", 0.08), new("D", 0.06), new("IH", 0.08), new("SH", 0.14), new("AH", 0.06), new("N", 0.15)
-        };
+        /// <summary>
+        /// Der Puls der Intro-Musik. Nicht frei gewählt: Vom Einschlag bis zum Untertitel
+        /// liegen genau 1,70 Sekunden, und das sind bei diesem Schlag exakt vier Takte.
+        /// Dadurch fällt jeder Bildwechsel auf eine Zählzeit, ohne dass am Bild etwas
+        /// verschoben werden musste.
+        /// </summary>
+        private const double IntroBeat = 0.425;
 
         /// <summary>
-        /// Die Tonspur des Intros in einem Stück: erst ein aufziehendes Rauschen, dann
-        /// der Einschlag, darüber der Sprecher, zum Schluss ein Am7-Teppich, der die
-        /// Menümusik übernimmt (die steht im selben Akkord).
+        /// Die Tonspur des Intros in einem Stück: ein Aufzug, der mit der kriechenden
+        /// Schlange schneller wird, der Einschlag auf das Futter, darüber eine Fanfare
+        /// zum Titel und eine Antwortphrase zum Untertitel, zum Schluss ein Am7-Teppich,
+        /// der die Menümusik übernimmt (die steht im selben Akkord).
         /// Ein Stück statt vieler Einzelklänge, damit Bild und Ton nicht auseinanderlaufen.
+        ///
+        /// Es gab hier bis 1.5.0 einen Sprecher („Snaaaake - Alexander Last Edition"),
+        /// gerechnet aus Formanten in einer eigenen Klasse Speech. Beides ist raus: Eine
+        /// synthetische Stimme zieht alle Aufmerksamkeit auf sich und lässt sich nach dem
+        /// zehnten Programmstart nicht mehr überhören. Musik trägt das Bild, ohne sich
+        /// davorzustellen.
         /// </summary>
         public static byte[] Intro()
         {
             var synth = new Synth(909);
-            var voice = new Speech(2026);
             float[] buffer = Synth.CreateBuffer(6.6);
 
             double impact = IntroTimeline.Impact;
+
+            // Takt ab dem Einschlag. Beat(4) ist auf die Tausendstel der Augenblick,
+            // in dem der Untertitel hereinwischt - siehe IntroBeat.
+            double Beat(double count) => impact + (count * IntroBeat);
 
             // --- Aufzug: ein Ton, der steigt, und ein Rauschen, das breiter wird ---
             synth.AddTone(buffer, 0.00, impact, 55, Wave.Saw, 0.20,
@@ -306,6 +504,14 @@ namespace Snake_Spiel.Game
                 spacing = Math.Max(0.035, spacing * 0.86);
             }
 
+            // Dumpfe Schläge, die schneller werden - der Herzschlag der kriechenden
+            // Schlange. Ohne sie hat der Aufzug keine Richtung, nur Lautstärke.
+            foreach (double at in new[] { 0.30, 0.62, 0.88, 1.08, 1.22 })
+            {
+                synth.AddTone(buffer, at, 0.07, 92, Wave.Sine, 0.30 + (0.35 * (at / impact)),
+                    attack: 0.002, decay: 0.05, sustain: 0.3, release: 0.16, endFrequency: 42, wrap: false);
+            }
+
             // --- Einschlag ---
             synth.AddKick(buffer, impact, 1.0);
             synth.AddTone(buffer, impact, 0.55, 95, Wave.Sine, 0.55,
@@ -320,22 +526,86 @@ namespace Snake_Spiel.Game
                     attack: 0.004, decay: 0.3, sustain: 0.5, release: 0.8, lowpassHz: 1800, wrap: false);
             }
 
-            // --- Teppich unter dem Sprecher: tief und sehr zurückhaltend ---
+            // --- Teppich: tief und zurückhaltend, trägt alles bis zum Abblenden ---
             synth.AddTone(buffer, impact, IntroTimeline.FadeOut - impact, Synth.NoteToHz(33), Wave.Sine, 0.085,
                 attack: 0.1, decay: 0.3, sustain: 0.85, release: 0.8, lowpassHz: 400, wrap: false);
             synth.AddTone(buffer, impact, IntroTimeline.FadeOut - impact, Synth.NoteToHz(45), Wave.Saw, 0.035,
                 attack: 0.4, decay: 0.3, sustain: 0.8, release: 0.8, lowpassHz: 900, wrap: false);
 
-            // --- Sprecher ---
-            voice.Say(buffer, IntroTimeline.VoiceSnake, SnakeCall, 145, 104, 1.00, 1.05);
+            // --- Puls ab dem Einschlag: Bass auf jeden zweiten Schlag, Hi-Hats auf Achteln.
+            //     Ohne ihn stünde das Bild nach dem Einschlag vier Sekunden über einer Fläche.
+            for (int eighth = 0; eighth < 20; eighth++)
+            {
+                double at = Beat(eighth * 0.5);
+                if (at >= IntroTimeline.FadeOut)
+                {
+                    break;
+                }
 
-            // Wischer vor dem Untertitel
+                synth.AddHiHat(buffer, at, eighth % 2 == 0 ? 0.11 : 0.055);
+            }
+
+            foreach (double count in new double[] { 0, 2, 4, 6, 8 })
+            {
+                synth.AddTone(buffer, Beat(count), IntroBeat * 1.4, Synth.NoteToHz(33), Wave.Triangle, 0.26,
+                    attack: 0.004, decay: 0.12, sustain: 0.55, release: 0.22, lowpassHz: 700, wrap: false);
+            }
+
+            // --- Fanfare zum Titel: a-Moll aufwärts bis zur Oktave, die stehen bleibt.
+            //     Vier Töne, mehr braucht ein Logo nicht.
+            (double Count, int Note, double Beats)[] hook =
+            {
+                (0.5, 69, 0.5), (1.0, 72, 0.5), (1.5, 76, 0.5), (2.0, 81, 1.6)
+            };
+
+            foreach ((double count, int note, double beats) in hook)
+            {
+                synth.AddTone(buffer, Beat(count), beats * IntroBeat * 0.92, Synth.NoteToHz(note), Wave.Saw, 0.22,
+                    attack: 0.006, decay: 0.08, sustain: 0.80, release: 0.26, lowpassHz: 4600, wrap: false);
+                synth.AddTone(buffer, Beat(count), beats * IntroBeat * 0.92, Synth.NoteToHz(note - 12), Wave.Square, 0.085,
+                    attack: 0.006, decay: 0.08, sustain: 0.80, release: 0.22, pulseWidth: 0.30, wrap: false);
+            }
+
+            // Wischer vor dem Untertitel: ein Rauschen, das aufzieht, und ein Wirbel,
+            // der in die Vier hineinführt.
             synth.AddTone(buffer, IntroTimeline.Swoosh, 0.22, 1, Wave.Noise, 0.20,
                 attack: 0.14, decay: 0.06, sustain: 0.5, release: 0.22, lowpassHz: 4200, wrap: false);
-            synth.AddKick(buffer, IntroTimeline.Subtitle, 0.55);
 
-            // Tiefer und größer: gleiche Laute, andere Stimme.
-            voice.Say(buffer, IntroTimeline.VoiceEdition, EditionCall, 96, 82, 0.90, 1.50);
+            for (int roll = 0; roll < 6; roll++)
+            {
+                synth.AddSnare(buffer, Beat(3.0) + (roll * 0.068), 0.10 + (0.22 * roll / 5.0));
+            }
+
+            // Der Untertitel landet auf der Vier: Kick und ein heller Akkord.
+            synth.AddKick(buffer, IntroTimeline.Subtitle, 0.75);
+            foreach (int note in new[] { 69, 72, 76, 81 })
+            {
+                synth.AddTone(buffer, IntroTimeline.Subtitle, IntroBeat * 3.4, Synth.NoteToHz(note), Wave.Saw, 0.045,
+                    attack: 0.03, decay: 0.3, sustain: 0.70, release: 0.6, lowpassHz: 2600, wrap: false);
+            }
+
+            // --- Antwortphrase: dieselbe Linie abwärts, sie beruhigt das Bild, ---
+            //     bevor es abblendet.
+            (double Count, int Note, double Beats)[] answer =
+            {
+                (5.0, 72, 0.5), (5.5, 71, 0.5), (6.0, 69, 1.0), (7.0, 64, 1.6)
+            };
+
+            foreach ((double count, int note, double beats) in answer)
+            {
+                synth.AddTone(buffer, Beat(count), beats * IntroBeat * 0.92, Synth.NoteToHz(note), Wave.Triangle, 0.20,
+                    attack: 0.01, decay: 0.10, sustain: 0.75, release: 0.30, wrap: false);
+                synth.AddTone(buffer, Beat(count), beats * IntroBeat * 0.92, Synth.NoteToHz(note + 12), Wave.Triangle, 0.055,
+                    attack: 0.01, decay: 0.10, sustain: 0.70, release: 0.30, wrap: false);
+            }
+
+            // Ein Arpeggio, das nach oben davonzieht und in den Ausklang übergibt.
+            int[] lift = { 69, 72, 76, 81, 84, 88 };
+            for (int i = 0; i < lift.Length; i++)
+            {
+                synth.AddTone(buffer, Beat(8.0) + (i * IntroBeat * 0.25), 0.07, Synth.NoteToHz(lift[i]), Wave.Triangle, 0.14,
+                    attack: 0.003, decay: 0.04, sustain: 0.5, release: 0.45, wrap: false);
+            }
 
             // --- Ausklang: Am7, der Anfangsakkord der Menümusik ---
             foreach (int note in new[] { 45, 57, 60, 64, 67 })
@@ -358,6 +628,7 @@ namespace Snake_Spiel.Game
             "hard" => BuildDramatic(),
             HardcoreKey => BuildHardcore(),
             ImpossibleKey => BuildImpossible(),
+            CursedKey => BuildCursed(),
             MenuKey => BuildMenu(),
             _ => BuildCool()
         };
@@ -367,6 +638,9 @@ namespace Snake_Spiel.Game
 
         /// <summary>Schlüssel der Musik für die Stufe Unmöglich.</summary>
         public const string ImpossibleKey = "impossible";
+
+        /// <summary>Schlüssel der Musik für die Stufe Verflucht.</summary>
+        public const string CursedKey = "cursed";
 
         /// <summary>Schlüssel der Musik im Hauptmenü.</summary>
         public const string MenuKey = "menu";
@@ -895,6 +1169,122 @@ namespace Snake_Spiel.Game
             }
 
             Synth.Normalize(buffer, 0.90);
+            return Synth.ToWav(buffer);
+        }
+
+        /// <summary>
+        /// VERFLUCHT - der Gegenentwurf zu allem davor. Die anderen Stücke werden
+        /// schneller, dieses wird langsamer: 60 Schläge pro Minute, ein Schlag je
+        /// Sekunde, acht Takte von je vier Sekunden. Dadurch läuft die Musik gegen
+        /// das Spiel, das an dieser Stelle sein Höchsttempo fährt - und genau dieser
+        /// Widerspruch macht die Stufe unheimlich statt nur hektisch.
+        ///
+        /// Sechs Schichten: eine Drone, die nie aufhört; eine Grabglocke alle zwei
+        /// Takte; ein Chor aus verstimmten Sägezähnen über d-Moll; Wind als langsam
+        /// atmendes Rauschen; ein Herzschlag unter der Erde; und eine Spieldose, die
+        /// eine Kinderleier spielt - das älteste Mittel des Genres, und es wirkt immer
+        /// noch. Kein Schlagzeug, kein Puls, an dem man sich festhalten könnte.
+        /// </summary>
+        private static byte[] BuildCursed()
+        {
+            var synth = new Synth(707);
+            const double beat = 1.0;              // 60 Schläge - eine Sekunde je Schlag
+            const double bar = beat * 4;
+            const int bars = 8;
+            float[] buffer = Synth.CreateBuffer(bar * bars);
+
+            // Spieldose und Glocke bekommen ihr Echo getrennt vom Rest, sonst
+            // verschmiert der Nachhall die Drone zu Brei.
+            float[] distant = Synth.CreateBuffer(bar * bars);
+
+            // d-Moll, aber mit Umwegen: Dm - B-Dur - Gm - A7 mit kleiner None.
+            // Das b9 im letzten Akkord ist der Ton, der die Auflösung verweigert.
+            int[][] chords =
+            {
+                new[] { 50, 53, 57, 62 },  // Dm
+                new[] { 46, 50, 53, 58 },  // Bb
+                new[] { 43, 50, 55, 58 },  // Gm
+                new[] { 45, 49, 55, 58 }   // A7(b9): a - cis - g - b
+            };
+            int[] roots = { 26, 22, 31, 33 };
+
+            for (int barIndex = 0; barIndex < bars; barIndex++)
+            {
+                double barStart = barIndex * bar;
+                int chord = (barIndex / 2) % chords.Length;
+
+                // 1) Drone: zwei gegeneinander verstimmte Sägezähne im Keller.
+                //    Sie decken den ganzen Takt ab und klingen in den nächsten hinein.
+                foreach (double detune in new[] { 1.003, 0.997 })
+                {
+                    synth.AddTone(buffer, barStart, bar * 0.98, Synth.NoteToHz(roots[chord]) * detune,
+                        Wave.Saw, 0.085, attack: 0.9, decay: 1.2, sustain: 0.85, release: 1.4,
+                        lowpassHz: 190);
+                }
+
+                // Eine Oktave darüber ein Sinus - gibt dem Fundament Kontur,
+                // ohne es heller zu machen.
+                synth.AddTone(buffer, barStart, bar * 0.95, Synth.NoteToHz(roots[chord] + 12),
+                    Wave.Sine, 0.11, attack: 1.1, decay: 1.0, sustain: 0.8, release: 1.6);
+
+                // 2) Chor: der Akkord als Fläche, jeder Ton doppelt und leicht verstimmt.
+                foreach (int note in chords[chord])
+                {
+                    foreach (double detune in new[] { 1.0045, 0.9955 })
+                    {
+                        synth.AddTone(buffer, barStart + 0.2, bar * 0.85, Synth.NoteToHz(note) * detune,
+                            Wave.Saw, 0.034, attack: 1.3, decay: 0.9, sustain: 0.75, release: 1.5,
+                            lowpassHz: 780);
+                    }
+                }
+
+                // 3) Wind: Rauschen, das über den Takt aufzieht und wieder abfällt.
+                synth.AddTone(buffer, barStart, bar * 0.9, 1, Wave.Noise, 0.030,
+                    attack: 1.6, decay: 0.8, sustain: 0.7, release: 1.8, lowpassHz: 420);
+
+                // 4) Herzschlag unter der Erde: zwei dumpfe Schläge, nie auf der Eins,
+                //    damit man den Takt nicht zählen kann.
+                synth.AddTone(buffer, barStart + (beat * 2.5), 0.10, 62, Wave.Sine, 0.30,
+                    attack: 0.004, decay: 0.08, sustain: 0.3, release: 0.28, endFrequency: 34);
+                synth.AddTone(buffer, barStart + (beat * 2.9), 0.09, 58, Wave.Sine, 0.20,
+                    attack: 0.004, decay: 0.07, sustain: 0.3, release: 0.26, endFrequency: 32);
+
+                // 5) Grabglocke alle zwei Takte, auf der Eins.
+                if (barIndex % 2 == 0)
+                {
+                    synth.AddBell(distant, barStart, Synth.NoteToHz(50 - (barIndex / 2 % 2 * 2)), 0.30, 5.0);
+                }
+            }
+
+            // 6) Spieldose: eine kurze Leier, wie sie ein Kind gesungen hätte.
+            //    Sie kommt zweimal - beim zweiten Mal einen Halbton tiefer, als wäre
+            //    die Feder ausgeleiert. Das ist der Punkt, an dem es kippt.
+            int[] lullaby = { 74, 77, 81, 77, 74, 72, 74, 69 };
+            for (int repeat = 0; repeat < 2; repeat++)
+            {
+                double offset = (repeat == 0 ? bar * 2 : bar * 6) + beat;
+                int shift = repeat == 0 ? 0 : -1;
+
+                for (int i = 0; i < lullaby.Length; i++)
+                {
+                    synth.AddTone(distant, offset + (i * beat * 0.5), 0.16,
+                        Synth.NoteToHz(lullaby[i] + shift), Wave.Triangle, 0.115,
+                        attack: 0.003, decay: 0.10, sustain: 0.35, release: 0.7);
+                }
+            }
+
+            // Weiter Nachhall nur auf der entfernten Spur; er läuft am Pufferende
+            // um, sonst hätte die Schleife dort ein Loch.
+            Synth.AddEcho(distant, beat * 1.5, 0.42, repeats: 4);
+
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                buffer[i] += distant[i];
+            }
+
+            // Leiser als alles andere im Spiel (Menü 0,68, Spielmusik 0,72 bis 0,90):
+            // Der Fluch drückt, er brüllt nicht.
+            Synth.Normalize(buffer, 0.64);
             return Synth.ToWav(buffer);
         }
     }

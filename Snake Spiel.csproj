@@ -17,21 +17,23 @@
     <None Remove="Tests\**" />
   </ItemGroup>
 
-  <!-- Logos oben links (Snake) und oben rechts (AL), als Ressource in die EXE eingebettet -->
+  <!-- Logos oben links (Snake, mit Krone nach dem Durchspielen) und oben rechts (AL),
+       als Ressource in die EXE eingebettet -->
   <ItemGroup>
     <Resource Include="Assets\snake-logo.png" />
+    <Resource Include="Assets\snake-logo-krone.png" />
     <Resource Include="Assets\al-logo.png" />
   </ItemGroup>
 
   <!-- Angaben, die Windows im Dateidialog und in den Eigenschaften der EXE anzeigt -->
   <PropertyGroup>
-    <Version>1.5.0</Version>
-    <AssemblyVersion>1.5.0.0</AssemblyVersion>
-    <FileVersion>1.5.0.0</FileVersion>
+    <Version>1.7.0</Version>
+    <AssemblyVersion>1.7.0.0</AssemblyVersion>
+    <FileVersion>1.7.0.0</FileVersion>
     <Product>Snake</Product>
     <Authors>Alexander Last</Authors>
     <Company>Alexander Last</Company>
-    <Description>Snake mit offenen Wänden, drei Schwierigkeitsgraden, lokalem Rekord, einem gesprochenen Vorspann und Musik, die das Programm selbst berechnet.</Description>
+    <Description>Snake mit drei Schwierigkeitsgraden, vier Eskalationsstufen bis hin zu Verflucht, einem Ende bei Level 25, lokalem Rekord, gesprochenem Vorspann und Musik, die das Programm selbst berechnet.</Description>
     <Copyright>Copyright (c) 2026 Alexander Last</Copyright>
     <NeutralLanguage>de-DE</NeutralLanguage>
   </PropertyGroup>

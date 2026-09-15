@@ -53,6 +53,23 @@ namespace Snake_Spiel.Game
             return true;
         }
 
+        /// <summary>
+        /// Löscht den Highscore eines einzelnen Grads. Wird beim Freischalten der nächsten
+        /// Stufe gerufen: Der abgeschlossene Modus ist danach nicht mehr spielbar, sein
+        /// Punktestand steht für nichts mehr. Das ist endgültig - es gibt keinen Weg zurück.
+        /// </summary>
+        /// <returns>true, wenn überhaupt etwas dastand.</returns>
+        public bool Clear(string difficultyKey)
+        {
+            if (!_scores.Remove(difficultyKey))
+            {
+                return false;
+            }
+
+            Save();
+            return true;
+        }
+
         public void Reset()
         {
             _scores.Clear();

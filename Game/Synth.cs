@@ -158,6 +158,43 @@ namespace Snake_Spiel.Game
                 attack: 0.001, decay: 0.03, sustain: 0.2, release: 0.06);
         }
 
+        /// <summary>
+        /// Glocke. Kein Oszillator klingt von allein wie eine Glocke: Ihre Teiltöne
+        /// liegen nicht in ganzzahligen Vielfachen des Grundtons. Unter dem Schlagton
+        /// brummt der Summton eine Oktave tiefer, darüber sitzen kleine Terz, Quinte
+        /// und Oktave. Ausgerechnet diese kleine Terz ist der Grund, warum eine Glocke
+        /// immer nach Moll klingt - auch wenn ringsum Dur gespielt wird.
+        /// Jeder Teilton klingt unterschiedlich schnell aus (hohe zuerst), sonst klingt
+        /// das Ergebnis nach Orgel statt nach Bronze.
+        /// </summary>
+        public void AddBell(
+            float[] buffer,
+            double startSeconds,
+            double frequency,
+            double volume,
+            double lengthSeconds,
+            bool wrap = true)
+        {
+            // Verhältnis zum Schlagton, Lautstärke, Anteil an der Ausklinglänge
+            (double Ratio, double Level, double Decay)[] partials =
+            {
+                (0.50, 0.80, 1.00), // Summton
+                (1.00, 1.00, 0.85), // Schlagton
+                (1.20, 0.62, 0.55), // kleine Terz - das Moll der Glocke
+                (1.50, 0.38, 0.40), // Quinte
+                (2.00, 0.30, 0.30), // Oktave
+                (2.66, 0.14, 0.16),
+                (3.34, 0.09, 0.10)
+            };
+
+            foreach ((double ratio, double level, double decay) in partials)
+            {
+                double length = Math.Max(0.05, lengthSeconds * decay);
+                AddTone(buffer, startSeconds, length * 0.25, frequency * ratio, Wave.Sine, volume * level,
+                    attack: 0.002, decay: length * 0.25, sustain: 0.45, release: length * 0.75, wrap: wrap);
+            }
+        }
+
         /// <summary>Hi-Hat: sehr kurzes, helles Rauschen.</summary>
         public void AddHiHat(float[] buffer, double startSeconds, double volume = 0.16, bool open = false)
         {

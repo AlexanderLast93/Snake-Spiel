@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -50,10 +51,46 @@ namespace Snake_Spiel
         private const double BoardGlowRadius = 34.0;
         private const double BoardGlowOpacity = 0.32;
 
+        /// <summary>
+        /// Dauer der Überblendung beim Musikwechsel zwischen Menü und Spiel. Der Vorspann
+        /// blendet in 0,30 s ins Menü; hier ist es etwas länger, weil dort beide Seiten im
+        /// selben Akkord stehen und hier nicht - eine zu kurze Blende klingt wieder nach
+        /// Schnitt, eine zu lange nach zwei Stücken übereinander.
+        /// </summary>
+        private const double MusicFadeSeconds = 0.45;
+
         /// <summary>Wie lange das Futter in den Eskalationsstufen liegen bleibt.</summary>
         private const double HardcoreFoodSeconds = 3.0;
 
-        private const double ImpossibleFoodSeconds = 1.5;
+        private const double ImpossibleFoodSeconds = 2.0;
+
+        // Verflucht. Der Weg hierher in Kurzform: erst tödliche Wände und 1,25 s (ein
+        // perfekter Bot gewann damit 68 % der Läufe, ein Mensch null), dann Grabsteine
+        // als Hindernis und ein Verhungern-Zähler, schließlich beides wieder raus -
+        // die Gräber standen ausgerechnet dort, wo man hinwollte. Was bleibt: offene
+        // Wände, großzügige Zeit, und die Schwierigkeit kommt allein daraus, dass man
+        // die schwarze Schlange auf dem dunklen Feld kaum sieht. Die Reihenfolge der
+        // Stufen stimmt trotzdem: 3,0 - 2,0 - 1,75.
+        private const double CursedFoodSeconds = 1.75;
+
+        /// <summary>
+        /// Grabsteine als Hindernis und ein Verhungern-Zähler standen hier einmal. Beides
+        /// ist nach dem Spieltest wieder geflogen: Die Gräber entstanden ausgerechnet dort,
+        /// wo das nächste Futter lag, und sie zu umfahren war kein Können, sondern Pech.
+        /// Vom Entwurf bleibt das Aussehen - das Futter dieser Stufe <em>ist</em> ein
+        /// Grabstein, samt Steinfarbe und rotem Rand. Damit trägt die Stufe ihre
+        /// Schwierigkeit allein über das Auge: Schlange und Futter heben sich beide kaum
+        /// vom Feld ab (Kontrast 1,96:1 gegen 7,17:1 beim Magenta-Futter der anderen
+        /// Stufen). Bewusst so entschieden, mit den Zahlen auf dem Tisch.
+        /// </summary>
+        private static readonly Color GravestoneBody = Color.FromRgb(0x4A, 0x3C, 0x42);
+
+        private static readonly Color GravestoneEdge = Color.FromRgb(0x8E, 0x1C, 0x24);
+
+        /// <summary>Anteil der Zellgröße: Breite und Höhe des Grabsteins.</summary>
+        private const double GravestoneWidth = 0.60;
+
+        private const double GravestoneHeight = 0.76;
 
         // Juice - alles in Pixeln bzw. Millisekunden. Klein beim Fressen, damit es
         // bei 24 Zügen pro Sekunde nicht nervt; kräftig beim Tod, weil der es verdient.
@@ -69,25 +106,34 @@ namespace Snake_Spiel
 
         // Jeder Schwierigkeitsgrad hat seine eigene Farbe. Der Tod ist grau, damit er
         // sich von allen Spielfarben abhebt - besonders von Orange im Hardcore-Zustand.
-        private static readonly SnakePalette PaletteSlow = new(
-            Color.FromRgb(0x8C, 0xD8, 0xFF), Color.FromRgb(0x0B, 0x3F, 0x7A), Color.FromRgb(0x38, 0xBD, 0xF8));
+        /// <summary>Augen in allen Graden bis auf den Fluch: fast schwarz.</summary>
+        private static readonly Color NormalEye = Color.FromRgb(0x04, 0x14, 0x1C);
 
-        // NORMAL trägt das Türkis des Schriftzugs im Menü (AccentColor #2DE2D5):
-        // heller Kopf, dunkler Schwanz, der Akzent als Schein.
+        // Die Grundfarbe aller Modi: das Türkis des Schriftzugs im Menü (AccentColor
+        // #2DE2D5), heller Kopf, dunkler Schwanz, der Akzent als Schein. Bis 1.6.0 hatte
+        // jeder Grad seine eigene Farbe - Blau für LANGSAM, Gelb für SCHNELL. Seit die
+        // drei eine Kette bilden statt einer Auswahl, sagt die Farbe nichts mehr aus:
+        // Man kann ohnehin immer nur einen spielen. Eine Farbe zu ändern, die keine
+        // Information mehr trägt, ist Lärm.
         private static readonly SnakePalette PaletteNormal = new(
-            Color.FromRgb(0xBC, 0xFF, 0xF7), Color.FromRgb(0x07, 0x5A, 0x56), Color.FromRgb(0x2D, 0xE2, 0xD5));
-
-        private static readonly SnakePalette PaletteFast = new(
-            Color.FromRgb(0xFF, 0xF3, 0x9B), Color.FromRgb(0x8A, 0x63, 0x00), Color.FromRgb(0xFA, 0xE0, 0x4C));
+            Color.FromRgb(0xBC, 0xFF, 0xF7), Color.FromRgb(0x07, 0x5A, 0x56), Color.FromRgb(0x2D, 0xE2, 0xD5), NormalEye);
 
         private static readonly SnakePalette PaletteHardcore = new(
-            Color.FromRgb(0xFF, 0xC4, 0x7A), Color.FromRgb(0xB0, 0x3A, 0x02), Color.FromRgb(0xFB, 0x8A, 0x2E));
+            Color.FromRgb(0xFF, 0xC4, 0x7A), Color.FromRgb(0xB0, 0x3A, 0x02), Color.FromRgb(0xFB, 0x8A, 0x2E), NormalEye);
 
         private static readonly SnakePalette PaletteImpossible = new(
-            Color.FromRgb(0xFF, 0x9A, 0x8F), Color.FromRgb(0x7E, 0x07, 0x07), Color.FromRgb(0xFF, 0x3B, 0x2F));
+            Color.FromRgb(0xFF, 0x9A, 0x8F), Color.FromRgb(0x7E, 0x07, 0x07), Color.FromRgb(0xFF, 0x3B, 0x2F), NormalEye);
+
+        // Verflucht: schwarz mit einem roten Hauch. Der Kopf ist nicht reines Schwarz,
+        // sonst verschwindet die Schlange auf dem dunklen Feld und man sieht nur noch
+        // zwei Augen schweben. Das Rot kommt aus dem Schein, nicht aus dem Körper -
+        // deshalb "leuchtet leicht rot" statt "ist rot".
+        private static readonly SnakePalette PaletteCursed = new(
+            Color.FromRgb(0x2A, 0x0C, 0x10), Color.FromRgb(0x07, 0x02, 0x03), Color.FromRgb(0xD1, 0x16, 0x22),
+            Color.FromRgb(0xFF, 0x30, 0x22));
 
         private static readonly SnakePalette PaletteDead = new(
-            Color.FromRgb(0xB4, 0xBE, 0xC8), Color.FromRgb(0x33, 0x3B, 0x45), Color.FromRgb(0x6B, 0x7A, 0x8A));
+            Color.FromRgb(0xB4, 0xBE, 0xC8), Color.FromRgb(0x33, 0x3B, 0x45), Color.FromRgb(0x6B, 0x7A, 0x8A), NormalEye);
 
         // Menü deckt fast alles ab, Pause und Spielende lassen das Feld durchscheinen.
         private static readonly Brush OverlayStrong = CreateOverlayBrush(0xEE);
@@ -115,17 +161,24 @@ namespace Snake_Spiel
         private readonly FrameStats _frameStats = new();
         private readonly List<Particle> _particles = new();
         private readonly List<Ellipse> _rings = new();
+
         private readonly TranslateTransform _boardShake = new();
         private readonly ScaleTransform _foodPop = new(1.0, 1.0);
         private readonly ScaleTransform _headBump = new(1.0, 1.0);
 
-        private Ellipse _food = null!;
+        private Path _food = null!;
         private Image _foodGlow = null!;
+        private Brush _foodFill = Brushes.Magenta;
+        private double _foodWidth;
+        private double _foodHeight;
+        private bool _foodIsGrave;
         private BitmapSource? _segmentSprite;
         private double _segmentSpritePad;
         private double _foodGlowPad;
         private double _spriteDeviceScale = 1.0;
         private Color _glowColor;
+        private Color _boardGlowColor;   // im Konstruktor aus AccentColor gesetzt
+        private Color _boardFill = Color.FromRgb(0x06, 0x0B, 0x13);
         private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
         private bool _loopRunning;
         private bool _diagnosticsVisible;
@@ -136,10 +189,22 @@ namespace Snake_Spiel
         private double _shakeTotalMs;
         private double _overlayDueMs = -1.0;
         private bool _deathIsRecord;
+        private bool _fastForwarded;
         private int _ringCursor;
         private Brush[] _bodyBrushes = Array.Empty<Brush>();
         private SnakePalette _brushPalette;
-        private Difficulty _difficulty = Difficulty.Normal;
+        // Der Spieler wählt keinen Grad mehr, sein Fortschritt bestimmt ihn. Steht beim
+        // Start auf dem, was in settings.json steht - beim ersten Mal also auf Tutorial.
+        private Difficulty _difficulty = Difficulty.Easy;
+
+        /// <summary>Hat der Zurücksetzen-Knopf schon einmal gefragt?</summary>
+        private bool _resetArmed;
+
+        // Eigene Pinsel statt FindResource: ArmReset läuft schon beim Aufbau des Fensters,
+        // und eine Ausnahme dort nimmt das ganze Spiel mit.
+        private static readonly Brush ResetQuietBrush = new SolidColorBrush(Color.FromRgb(0x6B, 0x81, 0x99));
+
+        private static readonly Brush ResetArmedBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x5B, 0x4C));
         private ViewState _state = ViewState.Menu;
         private ViewState _stateBeforeSettings = ViewState.Menu;
         private int _lastLevel = 1;
@@ -159,6 +224,10 @@ namespace Snake_Spiel
 
             _sounds = new SoundEngine(_settings);
 
+            // Die Grundstimmung des Felds kommt aus dem Farbschema; die Stufe Verflucht
+            // überschreibt sie später (ApplyBoardMood).
+            _boardGlowColor = (Color)FindResource("AccentColor");
+
             BoardShakeHost.RenderTransform = _boardShake;
 
             // Fenstermodus vor dem ersten Anzeigen setzen - so erscheint das Fenster
@@ -171,6 +240,12 @@ namespace Snake_Spiel
             BuildEyes();
             RebuildGlowSprites();
 
+            // Wer schon einmal durchgespielt hat, sieht die Krone von Anfang an.
+            if (_settings.Completed && CrownedLogo != null)
+            {
+                SnakeLogo.Source = CrownedLogo;
+            }
+
             ShowVersion();
 
             _sounds.StatusChanged += (_, _) => UpdateSoundStatus();
@@ -180,6 +255,75 @@ namespace Snake_Spiel
             // Das Menü steht fertig hinter dem Intro - nur seine Musik wartet.
             ShowMenu(withMusic: false);
             StartIntro();
+        }
+
+        /// <summary>
+        /// Das Logo mit Krone. Wird erst geladen, wenn es gebraucht wird - die meisten
+        /// Spieler bekommen es nie zu sehen, und ein Viertelmegabyte Bild kostet auch
+        /// Startzeit. Schlägt das Laden fehl, bleibt es bei null und das alte Logo
+        /// stehen: Ein fehlendes Bild darf nicht ausgerechnet den Siegesmoment
+        /// mit einer Ausnahme zerlegen.
+        /// </summary>
+        private static BitmapImage? CrownedLogo
+        {
+            get
+            {
+                if (_crownedLogo == null && !_crownedLogoFailed)
+                {
+                    try
+                    {
+                        var image = new BitmapImage(
+                            new Uri("pack://application:,,,/Assets/snake-logo-krone.png", UriKind.Absolute));
+                        image.Freeze();
+                        _crownedLogo = image;
+                    }
+                    catch (Exception)
+                    {
+                        _crownedLogoFailed = true;
+                    }
+                }
+
+                return _crownedLogo;
+            }
+        }
+
+        private static BitmapImage? _crownedLogo;
+        private static bool _crownedLogoFailed;
+
+        /// <summary>
+        /// Die Krone aufsetzen. Beim ersten Sieg mit Auftritt: Das Logo zieht sich kurz
+        /// zusammen, wechselt und schlägt dann über seine Größe hinaus - genau in dem
+        /// Moment, in dem die DANKE-Tafel schon steht. Danach liegt sie einfach dort,
+        /// bei jedem Start, für immer.
+        /// </summary>
+        private void PutOnCrown()
+        {
+            if (CrownedLogo == null)
+            {
+                return;
+            }
+
+            var shrink = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(260))
+            {
+                BeginTime = TimeSpan.FromMilliseconds(950),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+
+            shrink.Completed += (_, _) =>
+            {
+                SnakeLogo.Source = CrownedLogo ?? SnakeLogo.Source;
+
+                var grow = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(620))
+                {
+                    EasingFunction = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.8 }
+                };
+
+                SnakeLogoScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+                SnakeLogoScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow.Clone());
+            };
+
+            SnakeLogoScale.BeginAnimation(ScaleTransform.ScaleXProperty, shrink);
+            SnakeLogoScale.BeginAnimation(ScaleTransform.ScaleYProperty, shrink.Clone());
         }
 
         /// <summary>Zeigt die Programmversion aus der Projektdatei in Titelzeile und Legende.</summary>
@@ -392,10 +536,7 @@ namespace Snake_Spiel
             }
 
             BuildGrid();
-
-            double foodSize = CellSize - (8 * Scale);
-            _food.Width = foodSize;
-            _food.Height = foodSize;
+            ApplyFoodShape(force: true);
 
             foreach (Ellipse eye in _eyes)
             {
@@ -426,7 +567,10 @@ namespace Snake_Spiel
             double overlayScale = Math.Clamp(Scale, 0.6, 2.5);
             var overlayTransform = new ScaleTransform(overlayScale, overlayScale);
             overlayTransform.Freeze();
-            foreach (FrameworkElement panel in new FrameworkElement[] { MenuPanel, PausePanel, GameOverPanel, SettingsPanel, HardcoreBanner })
+            foreach (FrameworkElement panel in new FrameworkElement[]
+            {
+                MenuPanel, PausePanel, GameOverPanel, VictoryPanel, UnlockPanel, SettingsPanel, HardcoreBanner
+            })
             {
                 panel.LayoutTransform = overlayTransform;
             }
@@ -448,11 +592,18 @@ namespace Snake_Spiel
             Running,
             Paused,
             GameOver,
+
+            /// <summary>
+            /// Ein Modus ist abgeschlossen und der nächste freigeschaltet. Eigener Zustand,
+            /// weil hier jede Taste ins Menü führt und nicht in einen Neustart: Der eben
+            /// geschaffte Modus ist nicht mehr spielbar.
+            /// </summary>
+            Unlocked,
             Settings
         }
 
-        /// <summary>Farbsatz der Schlange: heller Kopf, dunkler Schwanz, passender Schein.</summary>
-        private readonly record struct SnakePalette(Color Head, Color Tail, Color Glow);
+        /// <summary>Farbsatz der Schlange: heller Kopf, dunkler Schwanz, Schein und Augen.</summary>
+        private readonly record struct SnakePalette(Color Head, Color Tail, Color Glow, Color Eye);
 
         /// <summary>Ein Funke: Form aus dem Pool plus Physik. Wird pro Bild weitergerechnet.</summary>
         private sealed class Particle
@@ -543,26 +694,26 @@ namespace Snake_Spiel
         }
 
         /// <summary>
-        /// Farbsatz zum aktuellen Zustand: der gewählte Grad bestimmt die Grundfarbe,
-        /// die Eskalationsstufen überschreiben sie mit Orange und Rot.
+        /// Farbsatz zum aktuellen Zustand: alle Modi starten türkis, die Eskalationsstufen
+        /// überschreiben das mit Orange, Rot und Schwarz. Der Grad spielt keine Rolle mehr.
         /// </summary>
         private SnakePalette CurrentPalette => _stage switch
         {
             EscalationStage.Hardcore => PaletteHardcore,
             EscalationStage.Impossible => PaletteImpossible,
-            _ => _difficulty.Key switch
-            {
-                "easy" => PaletteSlow,
-                "hard" => PaletteFast,
-                _ => PaletteNormal
-            }
+            EscalationStage.Cursed => PaletteCursed,
+            _ => PaletteNormal
         };
+
+        /// <summary>Läuft gerade die Stufe Verflucht?</summary>
+        private bool CursedStage => _stage == EscalationStage.Cursed;
 
         /// <summary>Name des Zustands für Anzeige und Spielende.</summary>
         private string CurrentModeName => _stage switch
         {
             EscalationStage.Hardcore => "HARDCORE",
             EscalationStage.Impossible => "UNMÖGLICH",
+            EscalationStage.Cursed => "VERFLUCHT",
             _ => _difficulty.DisplayName
         };
 
@@ -641,25 +792,59 @@ namespace Snake_Spiel
             // Anzeigen hochskaliert - bei einem Weichzeichner sieht man das nicht. Das
             // Innere trägt die Rahmenfarbe, sonst schimmerte beim Hochskalieren ein
             // heller Saum unter dem Rahmen hervor.
-            var accent = (Color)FindResource("AccentColor");
-            Color frameFill = Color.FromRgb(0x06, 0x0B, 0x13);
+            RebuildBoardGlow();
+
+            ApplyFoodShape(force: true);
+            ApplyGlowColor(_glowColor);
+        }
+
+        /// <summary>
+        /// Rechnet den Schein um das Spielfeld neu. Eigene Methode, weil die Stufe
+        /// Verflucht ihn rot färbt - und das Bild dann einmal neu entstehen muss.
+        /// Das Innere trägt die Rahmenfarbe, sonst schimmerte beim Hochskalieren ein
+        /// heller Saum unter dem Rahmen hervor.
+        /// </summary>
+        private void RebuildBoardGlow()
+        {
             double boardWidth = (Columns * CellSize) + 2;
             double boardHeight = (Rows * CellSize) + 2;
             BoardGlow.Source = RenderGlowSprite(
-                boardWidth, boardHeight, 12.0, BoardGlowRadius * Scale, frameFill, accent, BoardGlowOpacity,
+                boardWidth, boardHeight, 12.0, BoardGlowRadius * Scale, _boardFill, _boardGlowColor, BoardGlowOpacity,
                 _spriteDeviceScale * 0.25, out double boardPad);
             BoardGlow.Margin = new Thickness(-boardPad);
+        }
 
-            // Futterschein in voller Auflösung, als Kreis.
-            var foodColor = (Color)FindResource("FoodColor");
-            double foodSize = _food.Width;
-            _foodGlow.Source = RenderGlowSprite(
-                foodSize, foodSize, foodSize / 2.0, FoodGlowRadius * Scale, foodColor, foodColor, FoodGlowOpacity,
-                _spriteDeviceScale, out _foodGlowPad);
-            _foodGlow.Width = foodSize + (2 * _foodGlowPad);
-            _foodGlow.Height = foodSize + (2 * _foodGlowPad);
+        /// <summary>
+        /// Färbt Rahmen und Schein des Spielfelds passend zur Stufe. In der Stufe
+        /// Verflucht ist das keine Dekoration: Ab dort tötet die Wand, und der Spieler
+        /// muss das sehen können, ohne im Banner nachzulesen.
+        /// </summary>
+        private void ApplyBoardMood(EscalationStage stage)
+        {
+            bool cursed = stage == EscalationStage.Cursed;
 
-            ApplyGlowColor(_glowColor);
+            Color glow = cursed ? Color.FromRgb(0xC2, 0x14, 0x1E) : (Color)FindResource("AccentColor");
+            Color fill = cursed ? Color.FromRgb(0x09, 0x03, 0x05) : Color.FromRgb(0x06, 0x0B, 0x13);
+            Color border = cursed ? Color.FromRgb(0x9E, 0x18, 0x22) : Color.FromRgb(0x1B, 0x42, 0x58);
+
+            if (_boardGlowColor == glow && _boardFill == fill)
+            {
+                return;
+            }
+
+            _boardGlowColor = glow;
+            _boardFill = fill;
+
+            var fillBrush = new SolidColorBrush(fill);
+            fillBrush.Freeze();
+            BoardFrame.Background = fillBrush;
+
+            var borderBrush = new SolidColorBrush(border);
+            borderBrush.Freeze();
+            BoardFrame.BorderBrush = borderBrush;
+            BoardFrame.BorderThickness = new Thickness(cursed ? 2.0 : 1.0);
+
+            RebuildBoardGlow();
         }
 
         /// <summary>Holt das Segment-Sprite in dieser Farbe aus dem Vorrat oder rechnet es.</summary>
@@ -759,21 +944,25 @@ namespace Snake_Spiel
         /// <summary>Futter als pulsierender Neonpunkt.</summary>
         private void BuildFood()
         {
-            double size = CellSize - (8 * Scale);
-
-            _food = new Ellipse
+            var fill = new RadialGradientBrush
             {
-                Width = size,
-                Height = size,
-                Fill = new RadialGradientBrush
+                GradientStops = new GradientStopCollection
                 {
-                    GradientStops = new GradientStopCollection
-                    {
-                        new GradientStop(Color.FromRgb(0xFF, 0xD9, 0xF4), 0.0),
-                        new GradientStop(Color.FromRgb(0xFF, 0x4F, 0xD8), 0.55),
-                        new GradientStop(Color.FromRgb(0xC0, 0x1C, 0x9C), 1.0)
-                    }
-                },
+                    new GradientStop(Color.FromRgb(0xFF, 0xD9, 0xF4), 0.0),
+                    new GradientStop(Color.FromRgb(0xFF, 0x4F, 0xD8), 0.55),
+                    new GradientStop(Color.FromRgb(0xC0, 0x1C, 0x9C), 1.0)
+                }
+            };
+
+            fill.Freeze();
+            _foodFill = fill;
+
+            // Ein Path statt einer Ellipse: In der Stufe Verflucht ist das Futter kein
+            // Kreis, sondern ein Grabstein. Form, Füllung und Schein wechseln mit der
+            // Stufe (ApplyFoodShape); Puls, Pop und Deckkraft bleiben davon unberührt.
+            _food = new Path
+            {
+                Fill = fill,
                 RenderTransformOrigin = new Point(0.5, 0.5)
             };
 
@@ -810,6 +999,127 @@ namespace Snake_Spiel
 
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
+        }
+
+        /// <summary>
+        /// Gibt dem Futter seine Form: sonst ein Kreis, in der Stufe Verflucht ein
+        /// Grabstein. Setzt die Geometrie, den Umriss und den passenden Schein - und
+        /// tut nichts, wenn sich weder Stufe noch Zellgröße geändert haben.
+        /// Der Farbverlauf bleibt in beiden Fällen derselbe: Das Futter muss auffindbar
+        /// bleiben. Auf einem fast schwarzen Feld mit einer fast schwarzen Schlange
+        /// wäre ein grauer Stein keine Herausforderung mehr, sondern eine Zumutung.
+        /// </summary>
+        private void ApplyFoodShape(bool force = false)
+        {
+            bool grave = CursedStage;
+
+            if (!force && grave == _foodIsGrave)
+            {
+                return;
+            }
+
+            _foodIsGrave = grave;
+
+            Color glowColor;
+            double glowRadius;
+            double glowOpacity;
+
+            if (grave)
+            {
+                _foodWidth = Math.Round(CellSize * GravestoneWidth);
+                _foodHeight = Math.Round(CellSize * GravestoneHeight);
+                _food.Data = BuildGravestoneGeometry(_foodWidth, _foodHeight);
+
+                // Genau der Stein, der hier einmal als Hindernis stand: Steinkörper,
+                // roter Rand, das Kreuz als Loch, durch das der Schein leuchtet.
+                var body = new SolidColorBrush(GravestoneBody);
+                body.Freeze();
+                _food.Fill = body;
+
+                var edge = new SolidColorBrush(GravestoneEdge);
+                edge.Freeze();
+                _food.Stroke = edge;
+                _food.StrokeThickness = Math.Max(1.0, 1.4 * Scale);
+
+                glowColor = PaletteCursed.Glow;
+                glowRadius = SnakeGlowRadius * 0.8 * Scale;
+                glowOpacity = 0.55;
+            }
+            else
+            {
+                _foodWidth = CellSize - (8 * Scale);
+                _foodHeight = _foodWidth;
+
+                var circle = new EllipseGeometry(new Rect(0, 0, _foodWidth, _foodHeight));
+                circle.Freeze();
+                _food.Data = circle;
+                _food.Fill = _foodFill;
+                _food.Stroke = null;
+                _food.StrokeThickness = 0.0;
+
+                glowColor = (Color)FindResource("FoodColor");
+                glowRadius = FoodGlowRadius * Scale;
+                glowOpacity = FoodGlowOpacity;
+            }
+
+            _foodGlow.Source = RenderGlowSprite(
+                _foodWidth, _foodHeight, _foodWidth / 2.0, glowRadius,
+                glowColor, glowColor, glowOpacity, _spriteDeviceScale, out _foodGlowPad);
+            _foodGlow.Width = _foodWidth + (2 * _foodGlowPad);
+            _foodGlow.Height = _foodHeight + (2 * _foodGlowPad);
+        }
+
+        // ------------------------------------------------------------------
+        // Grabsteinform - seit dem Spieltest nur noch die Form des Futters
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Die Silhouette eines Grabsteins: unten rechteckig, oben ein Halbkreis.
+        /// Das Kreuz ist kein zweites Element, sondern ein Loch - beide Figuren liegen
+        /// in derselben Gruppe mit <see cref="FillRule.EvenOdd"/>. Dadurch scheint der
+        /// rote Schein, der hinter dem Stein liegt, durch das Kreuz hindurch, und es
+        /// bleibt ein einziges Element pro Stein.
+        /// </summary>
+        private static Geometry BuildGravestoneGeometry(double width, double height)
+        {
+            double radius = width / 2.0;
+
+            var stone = new PathFigure { StartPoint = new Point(0, height), IsClosed = true };
+            stone.Segments.Add(new LineSegment(new Point(0, radius), true));
+            stone.Segments.Add(new ArcSegment(
+                new Point(width, radius), new Size(radius, radius), 0, false, SweepDirection.Clockwise, true));
+            stone.Segments.Add(new LineSegment(new Point(width, height), true));
+
+            // Kreuz, mittig im Schaft
+            double arm = width * 0.42;
+            double thick = width * 0.15;
+            double centerX = width / 2.0;
+            double centerY = height * 0.52;
+
+            var cross = new PathFigure { StartPoint = new Point(centerX - (thick / 2), centerY - (arm / 2)), IsClosed = true };
+            foreach (Point point in new[]
+            {
+                new Point(centerX - (thick / 2), centerY - (arm / 4)),
+                new Point(centerX - (arm / 2), centerY - (arm / 4)),
+                new Point(centerX - (arm / 2), centerY + (thick / 2) - (arm / 4)),
+                new Point(centerX - (thick / 2), centerY + (thick / 2) - (arm / 4)),
+                new Point(centerX - (thick / 2), centerY + (arm / 2)),
+                new Point(centerX + (thick / 2), centerY + (arm / 2)),
+                new Point(centerX + (thick / 2), centerY + (thick / 2) - (arm / 4)),
+                new Point(centerX + (arm / 2), centerY + (thick / 2) - (arm / 4)),
+                new Point(centerX + (arm / 2), centerY - (arm / 4)),
+                new Point(centerX + (thick / 2), centerY - (arm / 4)),
+                new Point(centerX + (thick / 2), centerY - (arm / 2))
+            })
+            {
+                cross.Segments.Add(new LineSegment(point, true));
+            }
+
+            var geometry = new PathGeometry { FillRule = FillRule.EvenOdd };
+            geometry.Figures.Add(stone);
+            geometry.Figures.Add(cross);
+            geometry.Freeze();
+            return geometry;
         }
 
         /// <summary>Zwei Augen auf dem Kopf - kostet nichts, sieht aber lebendig aus.</summary>
@@ -873,6 +1183,7 @@ namespace Snake_Spiel
         private bool _introBuilt;
         private bool _introImpactDone;
         private bool _introFinished;
+        private bool _introHandover;
 
         /// <summary>
         /// Legt das Intro über das Bild und wartet auf seine Tonspur. Die Uhr des Intros
@@ -883,6 +1194,7 @@ namespace Snake_Spiel
         {
             _state = ViewState.Intro;
             _introFinished = false;
+            _introHandover = false;
             _introImpactDone = false;
             _introBuilt = false;
             _introSeconds = -1.0;
@@ -1124,12 +1436,22 @@ namespace Snake_Spiel
 
             IntroHint.Opacity = Saturate((t - 1.6) / 0.8) * 0.75;
 
-            // Abblenden und übergeben
+            // Abblenden und übergeben. Bild und Ton blenden über dieselbe Strecke:
+            // Der Am7-Ausklang des Intros und der Anfang der Menümusik stehen im selben
+            // Akkord, deshalb liegen sie hier bewusst übereinander.
             if (t >= SoundBank.IntroTimeline.FadeOut)
             {
                 IntroLayer.Opacity = 1.0 - Saturate(
                     (t - SoundBank.IntroTimeline.FadeOut)
                     / (SoundBank.IntroTimeline.End - SoundBank.IntroTimeline.FadeOut));
+
+                if (!_introHandover)
+                {
+                    _introHandover = true;
+                    _sounds.CrossfadeIntroToMusic(
+                        SoundBank.MenuKey,
+                        SoundBank.IntroTimeline.End - SoundBank.IntroTimeline.FadeOut);
+                }
             }
 
             if (t >= SoundBank.IntroTimeline.End)
@@ -1157,7 +1479,13 @@ namespace Snake_Spiel
             _introSeconds = -1.0;
 
             _sounds.IntroReady -= OnIntroReady;
-            _sounds.StopIntro();
+
+            // Beim Überspringen ist die Blende noch nicht gelaufen - dann eine kurze
+            // hier. Läuft sie schon, verwirft der Aufruf sich selbst. Das Abräumen der
+            // Tonspur gehört in beiden Fällen der Blende, nicht dieser Stelle: Ein
+            // StopIntro() hier würde sie mitten im Pegel abschneiden.
+            _introHandover = true;
+            _sounds.CrossfadeIntroToMusic(SoundBank.MenuKey, 0.30);
             _introFallback?.Stop();
             _introFallback = null;
 
@@ -1335,11 +1663,17 @@ namespace Snake_Spiel
             // einfach weiter; nach einem Spiel oder beim Start wird sie neu angesetzt.
             if (withMusic)
             {
-                _sounds.EnsureMusic(SoundBank.MenuKey);
+                // Überblenden statt schneiden. Läuft die Menümusik schon (Rückweg aus den
+                // Einstellungen), tut das hier wie EnsureMusic gar nichts.
+                _sounds.CrossfadeMusic(SoundBank.MenuKey, MusicFadeSeconds);
             }
 
+            // Muss vor Reset und ResetRules laufen: Erst hier steht fest, welcher Grad
+            // gerade dran ist.
+            UpdateMenuForProgress();
+
             _engine.Reset();
-            _engine.FoodLifetimeTicks = 0;
+            ResetRules(_difficulty);
             _clock.Reset();
             _lastLevel = 1;
             _stage = EscalationStage.Normal;
@@ -1347,7 +1681,6 @@ namespace Snake_Spiel
 
             Render(0.0);
             UpdateHud();
-            UpdateMenuRecords();
 
             Overlay.Background = OverlayStrong;
             ShowOnlyPanel(MenuPanel);
@@ -1368,12 +1701,13 @@ namespace Snake_Spiel
 
             _stage = EscalationStage.Normal;
             _engine.Reset();
-            _engine.FoodLifetimeTicks = 0;
+            ResetRules(difficulty);
             ApplyPalette();
             HardcoreBanner.Opacity = 0;
 
             _recordAtStart = _highScores.GetHighScore(difficulty.Key);
             _recordAnnounced = false;
+            _fastForwarded = false;
 
             ModeText.Text = difficulty.DisplayName;
             HideOverlay();
@@ -1386,7 +1720,7 @@ namespace Snake_Spiel
             StartLoop();
 
             _sounds.PlayEffect(SoundEngine.EffectStart);
-            _sounds.StartMusic(difficulty.Key);
+            _sounds.CrossfadeMusic(difficulty.Key, MusicFadeSeconds);
         }
 
         private void TogglePause()
@@ -1414,7 +1748,13 @@ namespace Snake_Spiel
             MenuPanel.Visibility = ReferenceEquals(panel, MenuPanel) ? Visibility.Visible : Visibility.Collapsed;
             PausePanel.Visibility = ReferenceEquals(panel, PausePanel) ? Visibility.Visible : Visibility.Collapsed;
             GameOverPanel.Visibility = ReferenceEquals(panel, GameOverPanel) ? Visibility.Visible : Visibility.Collapsed;
+            VictoryPanel.Visibility = ReferenceEquals(panel, VictoryPanel) ? Visibility.Visible : Visibility.Collapsed;
+            UnlockPanel.Visibility = ReferenceEquals(panel, UnlockPanel) ? Visibility.Visible : Visibility.Collapsed;
             SettingsPanel.Visibility = ReferenceEquals(panel, SettingsPanel) ? Visibility.Visible : Visibility.Collapsed;
+
+            // Der Zurücksetzen-Knopf gehört zum Menü, steht aber außerhalb der Tafel,
+            // damit er unten an der Kante klebt.
+            ResetProgressButton.Visibility = ReferenceEquals(panel, MenuPanel) ? Visibility.Visible : Visibility.Collapsed;
             Overlay.Visibility = Visibility.Visible;
         }
 
@@ -1424,7 +1764,21 @@ namespace Snake_Spiel
             MenuPanel.Visibility = Visibility.Collapsed;
             PausePanel.Visibility = Visibility.Collapsed;
             GameOverPanel.Visibility = Visibility.Collapsed;
+            VictoryPanel.Visibility = Visibility.Collapsed;
+            UnlockPanel.Visibility = Visibility.Collapsed;
             SettingsPanel.Visibility = Visibility.Collapsed;
+            ResetProgressButton.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Setzt alle Sonderregeln auf den Anfangszustand: offene Wände, kein Verhungern,
+        /// kein Verfall - und trägt das Ziel des Grads ein. Muss bei jedem Neustart und
+        /// beim Weg ins Menü laufen, sonst schleppt der nächste Lauf den Fluch mit.
+        /// </summary>
+        private void ResetRules(Difficulty difficulty)
+        {
+            _engine.FoodLifetimeTicks = 0;
+            _engine.WinFoodCount = difficulty.WinFoodCount;
         }
 
         /// <summary>Färbt Schlange, Schein und Punktestand passend zum Zustand ein.</summary>
@@ -1433,10 +1787,26 @@ namespace Snake_Spiel
             SnakePalette palette = CurrentPalette;
             RefreshBodyBrushes(_engine.Snake.Count, palette);
             ApplyGlowColor(palette.Glow);
+            ApplyBoardMood(_stage);
+            ApplyFoodShape();
 
             var accent = new SolidColorBrush(palette.Glow);
             accent.Freeze();
             ScoreText.Foreground = accent;
+
+            ApplyEyeColor(palette.Eye);
+        }
+
+        /// <summary>Färbt die Augen um - rot in der Stufe Verflucht, grau im Tod.</summary>
+        private void ApplyEyeColor(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+
+            foreach (Ellipse pupil in _eyes)
+            {
+                pupil.Fill = brush;
+            }
         }
 
         /// <summary>
@@ -1449,9 +1819,19 @@ namespace Snake_Spiel
 
             ApplyPalette();
             UpdateFoodLifetime();
-            ModeText.Text = CurrentModeName;
 
-            if (stage == EscalationStage.Impossible)
+            if (stage == EscalationStage.Cursed)
+            {
+                _sounds.PlayEffect(SoundEngine.EffectCursed);
+                _sounds.StartMusic(SoundBank.CursedKey);
+
+                HardcoreBannerTitle.Text = "VERFLUCHT";
+                HardcoreBannerTitle.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x2E, 0x2E));
+                HardcoreBannerGlow.Color = Color.FromRgb(0xC2, 0x14, 0x1E);
+                HardcoreBannerText.Text =
+                    "Die Schlange verschwindet im Dunkel · das Futter liegt in Gräbern und vergeht nach 1,75 s";
+            }
+            else if (stage == EscalationStage.Impossible)
             {
                 _sounds.PlayEffect(SoundEngine.EffectImpossible);
                 _sounds.StartMusic(SoundBank.ImpossibleKey);
@@ -1459,7 +1839,7 @@ namespace Snake_Spiel
                 HardcoreBannerTitle.Text = "UNMÖGLICH";
                 HardcoreBannerTitle.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x5B, 0x4C));
                 HardcoreBannerGlow.Color = Color.FromRgb(0xFF, 0x2A, 0x1C);
-                HardcoreBannerText.Text = "Das Futter ist nach anderthalb Sekunden wieder weg";
+                HardcoreBannerText.Text = "Das Futter ist nach zwei Sekunden wieder weg";
             }
             else
             {
@@ -1478,6 +1858,7 @@ namespace Snake_Spiel
             fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1700))));
             fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(2400))));
             HardcoreBanner.BeginAnimation(OpacityProperty, fade);
+            UpdateHud();
 
             Shake(DeathShakePixels * 0.6, DeathShakeMs * 0.7);
         }
@@ -1492,6 +1873,7 @@ namespace Snake_Spiel
             {
                 EscalationStage.Hardcore => HardcoreFoodSeconds,
                 EscalationStage.Impossible => ImpossibleFoodSeconds,
+                EscalationStage.Cursed => CursedFoodSeconds,
                 _ => 0.0
             };
 
@@ -1644,13 +2026,16 @@ namespace Snake_Spiel
 
         private void OnAte()
         {
-            _sounds.PlayEffect(SoundEngine.EffectEat);
+            // In der Stufe Verflucht klingen Fressen und Aufstieg anders - heller Blip
+            // und Fanfare würden die Friedhofsstimmung in der Sekunde zerreißen, in der
+            // sie am dichtesten ist.
+            _sounds.PlayEffect(CursedStage ? SoundEngine.EffectCursedEat : SoundEngine.EffectEat);
 
             // Der bisherige Rekord fällt: einmal pro Runde die Fanfare.
             if (!_recordAnnounced && _recordAtStart > 0 && _engine.Score > _recordAtStart)
             {
                 _recordAnnounced = true;
-                _sounds.PlayEffect(SoundEngine.EffectRecord);
+                _sounds.PlayEffect(CursedStage ? SoundEngine.EffectCursedRecord : SoundEngine.EffectRecord);
             }
 
             int level = _difficulty.LevelFor(_engine.FoodEaten);
@@ -1665,7 +2050,7 @@ namespace Snake_Spiel
                 }
                 else
                 {
-                    _sounds.PlayEffect(SoundEngine.EffectLevelUp);
+                    _sounds.PlayEffect(CursedStage ? SoundEngine.EffectCursedLevelUp : SoundEngine.EffectLevelUp);
                 }
             }
 
@@ -1681,7 +2066,8 @@ namespace Snake_Spiel
 
             Shake(EatShakePixels, EatShakeMs);
             SpawnRing(centerX, centerY);
-            SpawnParticles(centerX, centerY, EatParticleCount, 70.0, 210.0, 380.0, 3.0, 5.5, FoodSparkColors, ParticleGravity * 0.35);
+            SpawnParticles(centerX, centerY, EatParticleCount, 70.0, 210.0, 380.0, 3.0, 5.5,
+                CursedStage ? GraveSparkColors : FoodSparkColors, ParticleGravity * 0.35);
             BumpHead();
             PopFood();
         }
@@ -1699,7 +2085,7 @@ namespace Snake_Spiel
 
             // Sofort eintragen - wer während der Funken schon R drückt, darf
             // seinen Rekord nicht verlieren.
-            _deathIsRecord = _highScores.TrySubmit(_difficulty.Key, _engine.Score);
+            _deathIsRecord = !_fastForwarded && _highScores.TrySubmit(_difficulty.Key, _engine.Score);
 
             SnakePalette palette = CurrentPalette;
             GridPoint head = _engine.Head;
@@ -1748,15 +2134,34 @@ namespace Snake_Spiel
             _overlayDueMs = -1.0;
             _sounds.StopMusic();
 
+            bool isRecord = won
+                ? !_fastForwarded && _highScores.TrySubmit(_difficulty.Key, _engine.Score)
+                : _deathIsRecord;
+
+            if (_engine.Ending == EndCause.Goal)
+            {
+                // Nur der letzte Modus der Kette hat ein echtes Ende. Die beiden davor
+                // schalten den nächsten frei und schicken zurück ins Menü.
+                if (ReferenceEquals(_difficulty, Difficulty.Hard))
+                {
+                    ShowVictory(isRecord);
+                }
+                else
+                {
+                    ShowUnlocked();
+                }
+
+                return;
+            }
+
             if (won)
             {
                 _sounds.PlayEffect(SoundEngine.EffectGameOver);
             }
 
-            bool isRecord = won ? _highScores.TrySubmit(_difficulty.Key, _engine.Score) : _deathIsRecord;
-
             RefreshBodyBrushes(_engine.Snake.Count, PaletteDead);
             ApplyGlowColor(PaletteDead.Glow);
+            ApplyEyeColor(PaletteDead.Eye);
             Render(0.0);
             UpdateHud();
 
@@ -1764,13 +2169,111 @@ namespace Snake_Spiel
             NewRecordText.Visibility = isRecord ? Visibility.Visible : Visibility.Collapsed;
 
             string modeName = CurrentModeName;
-            string lengthInfo = $"Länge {_engine.Snake.Count} · Level {_difficulty.LevelFor(_engine.FoodEaten)} · Modus {modeName}";
+            string lengthInfo = $"Länge {_engine.Snake.Count} · Level {CurrentLevel} · Modus {modeName}"
+                + (_fastForwarded ? " · vorgespult, kein Highscore" : string.Empty);
             GameOverDetailText.Text = won
                 ? "Spielfeld komplett gefüllt - mehr geht nicht.\n" + lengthInfo
-                : lengthInfo + $"\nRekord in diesem Modus: {_highScores.GetHighScore(_difficulty.Key)}";
+                : lengthInfo + $"\nHighscore in diesem Modus: {_highScores.GetHighScore(_difficulty.Key)}";
 
             Overlay.Background = OverlayEnd;
             ShowOnlyPanel(GameOverPanel);
+        }
+
+        /// <summary>
+        /// Ein Modus der Kette ist abgeschlossen: dieselbe Fanfare wie beim Durchspielen,
+        /// aber kein Ende. Der nächste Modus wird freigeschaltet, der Highscore des
+        /// abgeschlossenen gelöscht - er ist ab jetzt nicht mehr spielbar, sein
+        /// Punktestand steht für nichts mehr. Von hier führt jede Taste ins Menü.
+        /// </summary>
+        private void ShowUnlocked()
+        {
+            _state = ViewState.Unlocked;
+            _sounds.PlayEffect(SoundEngine.EffectVictory);
+
+            Difficulty done = _difficulty;
+            int score = _engine.Score;
+            int length = _engine.Snake.Count;
+
+            if (_settings.AdvanceProgress())
+            {
+                _settings.Save();
+            }
+
+            _highScores.Clear(done.Key);
+
+            Difficulty next = _settings.CurrentDifficulty;
+            UnlockHeadline.Text = $"{next.Subtitle} ist freigeschaltet.";
+            UnlockDetailText.Text =
+                $"{score} Punkte · Länge {length} · Level {done.WinLevel} in {done.Subtitle} geschafft.\n"
+                + "Der Highscore beginnt im neuen Modus von vorn.";
+
+            Render(0.0);
+            UpdateHud();
+
+            Overlay.Background = OverlayStrong;
+            ShowOnlyPanel(UnlockPanel);
+
+            // Derselbe Einschlag wie bei der DANKE-Tafel.
+            var pop = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
+            pop.KeyFrames.Add(new LinearDoubleKeyFrame(0.55, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            pop.KeyFrames.Add(new SplineDoubleKeyFrame(
+                1.0,
+                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(620)),
+                new KeySpline(0.12, 1.4, 0.30, 1.0)));
+            UnlockTitleScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+            UnlockTitleScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+
+            var fade = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(420))));
+            UnlockPanel.BeginAnimation(OpacityProperty, fade);
+        }
+
+        /// <summary>
+        /// Durchgespielt: die einzige Tafel des Spiels, die man nur einmal zu sehen
+        /// bekommt. Die Schlange bleibt in ihren Farben - sie hat nicht verloren.
+        /// Nur der letzte Modus der Kette kommt hier an, deshalb fällt hier auch die Krone.
+        /// </summary>
+        private void ShowVictory(bool isRecord)
+        {
+            _sounds.PlayEffect(SoundEngine.EffectVictory);
+
+            // Die einzige Auszeichnung des Spiels: Ab jetzt trägt die Schlange im Logo
+            // eine Krone. Beim ersten Mal mit Auftritt, danach steht sie ohnehin schon da.
+            if (_settings.MarkCompleted())
+            {
+                _settings.Save();
+                PutOnCrown();
+            }
+
+            Render(0.0);
+            UpdateHud();
+
+            VictoryDetailText.Text =
+                $"{_engine.Score} Punkte · Länge {_engine.Snake.Count} · {_engine.FoodEaten} Futter\n"
+                + $"Level {_difficulty.WinLevel} im Modus {_difficulty.DisplayName} - "
+                + "durch Hardcore, Unmöglich und Verflucht."
+                + (_fastForwarded ? "\n(vorgespult - zählt nicht für den Highscore)" : string.Empty);
+            VictoryRecordText.Visibility = isRecord ? Visibility.Visible : Visibility.Collapsed;
+
+            Overlay.Background = OverlayStrong;
+            ShowOnlyPanel(VictoryPanel);
+
+            // Das Wort schlägt ein, statt einzublenden: erst über das Ziel hinaus,
+            // dann zurück. Dieselbe Kurve wie beim Einschlag im Vorspann.
+            var pop = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
+            pop.KeyFrames.Add(new LinearDoubleKeyFrame(0.55, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            pop.KeyFrames.Add(new SplineDoubleKeyFrame(
+                1.0,
+                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(620)),
+                new KeySpline(0.12, 1.4, 0.30, 1.0)));
+            VictoryThanksScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+            VictoryThanksScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+
+            var fade = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.HoldEnd };
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(420))));
+            VictoryPanel.BeginAnimation(OpacityProperty, fade);
         }
 
         // ------------------------------------------------------------------
@@ -1781,6 +2284,22 @@ namespace Snake_Spiel
         {
             Color.FromRgb(0xFF, 0xD9, 0xF4), Color.FromRgb(0xFF, 0x4F, 0xD8), Color.FromRgb(0xFF, 0xFF, 0xFF)
         };
+
+        /// <summary>
+        /// Funken, wenn in der Stufe Verflucht ein Grabstein eingesammelt wird:
+        /// heller Steinstaub, dunkler Bruch und das Rot der Stufe. Rosa Funken hätten
+        /// aus einem Stein nichts zu suchen - der Einschlag muss aussehen, als wäre
+        /// etwas zerborsten, nicht als wäre eine Süßigkeit geplatzt.
+        /// </summary>
+        private static readonly Color[] GraveSparkColors =
+        {
+            Color.FromRgb(0xC9, 0xB6, 0xBD), Color.FromRgb(0x4A, 0x3C, 0x42), Color.FromRgb(0xE0, 0x2A, 0x34)
+        };
+
+        /// <summary>Der Ring, der beim Fressen aufgeht - rosa, in Verflucht rot.</summary>
+        private static readonly Color RingColor = Color.FromRgb(0xFF, 0x7A, 0xE2);
+
+        private static readonly Color GraveRingColor = Color.FromRgb(0xD1, 0x16, 0x1E);
 
         private bool EffectsActive => _shakeRemainingMs > 0.0 || _overlayDueMs >= 0.0 || _particles.Count > 0;
 
@@ -1953,7 +2472,6 @@ namespace Snake_Spiel
                 var ring = new Ellipse
                 {
                     StrokeThickness = 3.0,
-                    Stroke = new SolidColorBrush(Color.FromRgb(0xFF, 0x7A, 0xE2)),
                     RenderTransformOrigin = new Point(0.5, 0.5),
                     RenderTransform = new ScaleTransform(1.0, 1.0),
                     IsHitTestVisible = false,
@@ -1968,10 +2486,15 @@ namespace Snake_Spiel
             Ellipse target = _rings[_ringCursor];
             _ringCursor = (_ringCursor + 1) % _rings.Count;
 
-            // Größe bei jedem Einsatz setzen - die Zellgröße kann sich geändert haben.
+            // Größe und Farbe bei jedem Einsatz setzen - Zellgröße und Stufe können
+            // sich seit dem letzten Mal geändert haben.
             target.Width = baseSize;
             target.Height = baseSize;
             target.StrokeThickness = 3.0 * Scale;
+
+            var stroke = new SolidColorBrush(CursedStage ? GraveRingColor : RingColor);
+            stroke.Freeze();
+            target.Stroke = stroke;
             Canvas.SetLeft(target, centerX - (baseSize / 2.0));
             Canvas.SetTop(target, centerY - (baseSize / 2.0));
             target.Visibility = Visibility.Visible;
@@ -2052,6 +2575,7 @@ namespace Snake_Spiel
                 _frameStats.Describe() + "\n"
                 + $"Render-Tier {tier} (2 = Grafikkarte, 0 = Software) · DPI ×{dpiScale:0.00} · Schritt {_clock.IntervalMs:0} ms"
                 + $" · Scheineffekte {(_effectsEnabled ? "an" : "aus")} (F4) · F3 schließt\n"
+                + $"L = 5 Level vorspulen (nur hier, sperrt den Highscore){(_fastForwarded ? " · vorgespult" : string.Empty)}\n"
                 + $"Bühne {Stage.ActualWidth:0}×{Stage.ActualHeight:0} · Zelle {_cellSize:0} px · Feld {Columns * _cellSize:0}×{Rows * _cellSize:0}"
                 + $" · {(_fullscreen ? "Vollbild" : "Fenster")} (F11)";
         }
@@ -2200,8 +2724,8 @@ namespace Snake_Spiel
                     : 1.0;
                 _foodGlow.Opacity = _food.Opacity;
 
-                double foodLeft = (_engine.Food.X * CellSize) + ((CellSize - _food.Width) / 2.0);
-                double foodTop = (_engine.Food.Y * CellSize) + ((CellSize - _food.Height) / 2.0);
+                double foodLeft = (_engine.Food.X * CellSize) + ((CellSize - _foodWidth) / 2.0);
+                double foodTop = (_engine.Food.Y * CellSize) + ((CellSize - _foodHeight) / 2.0);
                 Canvas.SetLeft(_food, foodLeft);
                 Canvas.SetTop(_food, foodTop);
                 Canvas.SetLeft(_foodGlow, foodLeft - _foodGlowPad);
@@ -2351,16 +2875,141 @@ namespace Snake_Spiel
             bool ahead = _engine.Score > record;
             HighScoreText.Text = (ahead ? _engine.Score : record).ToString();
             HighScoreText.Foreground = (Brush)FindResource(ahead ? "AccentBrush" : "TextBrush");
-            LevelText.Text = _difficulty.LevelFor(_engine.FoodEaten).ToString();
+            LevelText.Text = CurrentLevel.ToString();
             ModeText.Text = CurrentModeName;
         }
 
+        /// <summary>
+        /// Das Level für die Anzeige. Der letzte Happen des Ziel-Levels schiebt die
+        /// Rechnung formal ins nächste Level - angezeigt wird trotzdem das Ziel,
+        /// sonst stünde nach dem Sieg "Level 26" in der Spalte.
+        /// </summary>
+        private int CurrentLevel
+        {
+            get
+            {
+                int level = _difficulty.LevelFor(_engine.FoodEaten);
+                return _difficulty.IsWinnable ? Math.Min(level, _difficulty.WinLevel) : level;
+            }
+        }
+
+        /// <summary>
+        /// Bringt das Menü auf den Stand des Fortschritts: welcher Modus hinter START
+        /// steht, welcher Highscore darunter, und die Rückfrage am Zurücksetzen-Knopf
+        /// ist wieder zu. Nur der Highscore der aktuellen Stufe wird gezeigt - die
+        /// anderen gibt es nicht mehr, sie werden beim Freischalten gelöscht.
+        /// </summary>
+        private void UpdateMenuForProgress()
+        {
+            _difficulty = _settings.CurrentDifficulty;
+            StartModeText.Text = _difficulty.Subtitle;
+            UpdateMenuRecords();
+            ArmReset(false);
+        }
+
+        /// <summary>Schriftgröße der Punktzahl im Menü.</summary>
+        private const double MenuScoreFontSize = 34.0;
+
+        /// <summary>Wie die Punktzahl im Menü aussieht: Füllung, Rand, Schein.</summary>
+        private readonly record struct ScoreLook(Color Fill, Color? Stroke, Color Glow, double Blur, double Opacity);
+
+        private static readonly ScoreLook ScoreLookPlain =
+            new(Color.FromRgb(0xBC, 0xFF, 0xF7), null, Color.FromRgb(0x2D, 0xE2, 0xD5), 26.0, 0.75);
+
+        private static readonly ScoreLook ScoreLookHardcore =
+            new(Color.FromRgb(0xFF, 0xC4, 0x7A), null, Color.FromRgb(0xFB, 0x8A, 0x2E), 28.0, 0.80);
+
+        private static readonly ScoreLook ScoreLookImpossible =
+            new(Color.FromRgb(0xFF, 0x9A, 0x8F), null, Color.FromRgb(0xFF, 0x3B, 0x2F), 30.0, 0.85);
+
+        // Verflucht: schwarz wie die Schlange. Gegen den Grund des Menüs steht die Füllung
+        // bei 1,04:1 - sie ist also praktisch unsichtbar, und genau das ist der Punkt.
+        // Lesbar wird die Zahl allein durch den roten Rand (3,77:1) und den Schein. Reines
+        // Schwarz statt des Schlangenkopfs #2A0C10, weil der Rand sich davon stärker
+        // abhebt (3,77 gegen 3,32) und der Unterschied zum Grund ohnehin keiner ist.
+        private static readonly ScoreLook ScoreLookCursed =
+            new(
+                Color.FromRgb(0x08, 0x02, 0x04),
+                Color.FromRgb(0xD1, 0x16, 0x22),
+                Color.FromRgb(0xD1, 0x16, 0x22),
+                34.0,
+                0.95);
+
+        /// <summary>Der Schein für Durchgespielte - dieselbe Farbe wie die Krone.</summary>
+        private static readonly Color ScoreGoldGlow = Color.FromRgb(0xFF, 0xC2, 0x3A);
+
+        /// <summary>
+        /// Setzt die Punktzahl im Menü samt Aussehen. Die Zahl steht als Schriftgeometrie
+        /// in einem <see cref="Path"/>, nicht in einem TextBlock: Nur so bekommt sie für
+        /// die Stufe Verflucht einen Rand.
+        /// </summary>
         private void UpdateMenuRecords()
         {
-            MenuRecordsText.Text =
-                $"Highscore:   leicht {_highScores.GetHighScore(Difficulty.Easy.Key)}   ·   " +
-                $"normal {_highScores.GetHighScore(Difficulty.Normal.Key)}   ·   " +
-                $"schnell {_highScores.GetHighScore(Difficulty.Hard.Key)}";
+            int score = _highScores.GetHighScore(_difficulty.Key);
+            ScoreLook look = LookForScore(score);
+
+            MenuScoreShape.Data = BuildTextGeometry(
+                score.ToString(CultureInfo.InvariantCulture),
+                MenuScoreFontSize,
+                DeviceScale);
+
+            MenuScoreShape.Fill = new SolidColorBrush(look.Fill);
+            MenuScoreShape.Stroke = look.Stroke.HasValue ? new SolidColorBrush(look.Stroke.Value) : null;
+            MenuScoreShape.StrokeThickness = look.Stroke.HasValue ? 2.0 : 0.0;
+            MenuScoreShape.Effect = new DropShadowEffect
+            {
+                Color = look.Glow,
+                BlurRadius = look.Blur,
+                ShadowDepth = 0,
+                Opacity = look.Opacity
+            };
+        }
+
+        /// <summary>
+        /// Welches Aussehen zu einem Highscore gehört. Die Stufe wird aus der Punktzahl
+        /// zurückgerechnet (zehn Punkte je Happen), sie steht nirgends gespeichert. In
+        /// Tutorial und Klassisch gibt es keine Eskalation, dort bleibt es immer beim
+        /// Türkis der Schlange.
+        /// Durchgespielt färbt nicht die Zahl, sondern nur den Schein: Wer gewonnen hat,
+        /// steht ohnehin tief in Verflucht, und dessen schwarze Zahl mit rotem Rand ist
+        /// zu schade, um sie zu überschreiben.
+        /// </summary>
+        private ScoreLook LookForScore(int score)
+        {
+            ScoreLook look = _difficulty.StageForScore(score) switch
+            {
+                EscalationStage.Cursed => ScoreLookCursed,
+                EscalationStage.Impossible => ScoreLookImpossible,
+                EscalationStage.Hardcore => ScoreLookHardcore,
+                _ => ScoreLookPlain
+            };
+
+            return _settings.Completed
+                ? look with { Glow = ScoreGoldGlow, Blur = 38.0, Opacity = 1.0 }
+                : look;
+        }
+
+        /// <summary>Text als Geometrie - Grundlage für eine Zahl mit Rand.</summary>
+        private static Geometry BuildTextGeometry(string text, double fontSize, double pixelsPerDip)
+        {
+            var typeface = new Typeface(
+                new FontFamily("Segoe UI"),
+                FontStyles.Normal,
+                FontWeights.Bold,
+                FontStretches.Normal);
+
+            var formatted = new FormattedText(
+                text,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                Brushes.White,
+                Math.Max(0.1, pixelsPerDip));
+
+            Geometry geometry = formatted.BuildGeometry(new Point(0.0, 0.0));
+            geometry.Freeze();
+            return geometry;
         }
 
         private void UpdateSoundStatus()
@@ -2533,7 +3182,11 @@ namespace Snake_Spiel
                         return;
                     }
 
-                    if (_state == ViewState.Menu)
+                    if (_state == ViewState.Unlocked)
+                    {
+                        ShowMenu();
+                    }
+                    else if (_state == ViewState.Menu)
                     {
                         StartGame(_difficulty);
                     }
@@ -2550,7 +3203,11 @@ namespace Snake_Spiel
                     return;
 
                 case Key.Enter:
-                    if (_state == ViewState.Menu || _state == ViewState.GameOver)
+                    if (_state == ViewState.Unlocked)
+                    {
+                        ShowMenu();
+                    }
+                    else if (_state == ViewState.Menu || _state == ViewState.GameOver)
                     {
                         StartGame(_difficulty);
                     }
@@ -2559,7 +3216,11 @@ namespace Snake_Spiel
                     return;
 
                 case Key.R:
-                    if (_state != ViewState.Menu && _state != ViewState.Settings)
+                    if (_state == ViewState.Unlocked)
+                    {
+                        ShowMenu();
+                    }
+                    else if (_state != ViewState.Menu && _state != ViewState.Settings)
                     {
                         StartGame(_difficulty);
                     }
@@ -2591,6 +3252,19 @@ namespace Snake_Spiel
                     e.Handled = true;
                     return;
 
+                case Key.L:
+                    // Prüfhilfe, absichtlich hinter der Messanzeige versteckt: Ohne F3
+                    // passiert hier nichts. Wer die späten Stufen ansehen will, braucht
+                    // sonst einen halben Abend - und die Schlusstafel bei Level 25
+                    // bekäme man fast nie zu Gesicht.
+                    if (_diagnosticsVisible && _state == ViewState.Running)
+                    {
+                        FastForwardLevels(5);
+                    }
+
+                    e.Handled = true;
+                    return;
+
                 case Key.F4:
                     ToggleEffects();
                     e.Handled = true;
@@ -2601,36 +3275,40 @@ namespace Snake_Spiel
                     e.Handled = true;
                     return;
 
-                case Key.D1:
-                case Key.NumPad1:
-                    if (_state != ViewState.Running && _state != ViewState.Settings)
-                    {
-                        StartGame(Difficulty.Easy);
-                    }
-
-                    e.Handled = true;
-                    return;
-
-                case Key.D2:
-                case Key.NumPad2:
-                    if (_state != ViewState.Running && _state != ViewState.Settings)
-                    {
-                        StartGame(Difficulty.Normal);
-                    }
-
-                    e.Handled = true;
-                    return;
-
-                case Key.D3:
-                case Key.NumPad3:
-                    if (_state != ViewState.Running && _state != ViewState.Settings)
-                    {
-                        StartGame(Difficulty.Hard);
-                    }
-
-                    e.Handled = true;
-                    return;
             }
+        }
+
+        /// <summary>
+        /// Springt um so viele Level nach vorn und zieht alles nach, was sonst beim
+        /// Fressen nachgezogen wird: Tempo, Stufe, Farben, Futterzeit, Anzeige. Der
+        /// Lauf ist danach für die Rekordliste gesperrt.
+        /// </summary>
+        private void FastForwardLevels(int levels)
+        {
+            int added = _engine.FastForward(levels * _difficulty.SpeedUpEveryFood);
+            if (added <= 0)
+            {
+                return;
+            }
+
+            _fastForwarded = true;
+            _lastLevel = _difficulty.LevelFor(_engine.FoodEaten);
+            _clock.IntervalMs = _difficulty.IntervalFor(_engine.FoodEaten);
+
+            EscalationStage stage = _difficulty.StageFor(_engine.FoodEaten);
+            if (stage > _stage)
+            {
+                EnterStage(stage);
+            }
+            else
+            {
+                ApplyPalette();
+                UpdateFoodLifetime();
+                UpdateHud();
+            }
+
+            Render(0.0);
+            UpdateDiagnosticsText();
         }
 
         private void TrySteer(Direction direction)
@@ -2653,12 +3331,41 @@ namespace Snake_Spiel
             }
         }
 
-        private void DifficultyButton_Click(object sender, RoutedEventArgs e)
+        private void StartButton_Click(object sender, RoutedEventArgs e) => StartGame(_difficulty);
+
+        /// <summary>
+        /// Zurücksetzen fragt einmal nach. Der zweite Klick wirft den Fortschritt weg und
+        /// löscht alle Highscores - es gibt danach nichts mehr zu holen. Wer stattdessen
+        /// woanders hinklickt oder ins Spiel geht, hat die Frage abgelehnt.
+        /// </summary>
+        private void ResetProgressButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button { Tag: string key })
+            if (!_resetArmed)
             {
-                StartGame(Difficulty.FromKey(key));
+                ArmReset(true);
+                return;
             }
+
+            ArmReset(false);
+
+            _settings.ResetProgress();
+            _settings.Save();
+            _highScores.Reset();
+
+            _difficulty = _settings.CurrentDifficulty;
+            ResetRules(_difficulty);
+            _sounds.PlayEffect(SoundEngine.EffectStart);
+            UpdateMenuForProgress();
+        }
+
+        /// <summary>Schaltet die Rückfrage am Zurücksetzen-Knopf ein oder aus.</summary>
+        private void ArmReset(bool armed)
+        {
+            _resetArmed = armed;
+            ResetProgressButton.Content = armed
+                ? "Wirklich? Alles zurück auf Tutorial"
+                : "Fortschritt zurücksetzen";
+            ResetProgressButton.Foreground = armed ? ResetArmedBrush : ResetQuietBrush;
         }
 
         private void RestartButton_Click(object sender, RoutedEventArgs e) => StartGame(_difficulty);

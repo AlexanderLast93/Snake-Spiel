@@ -40,6 +40,14 @@ namespace Snake_Spiel.Game
         /// </summary>
         public const int ChunkCount = 8;
 
+        /// <summary>
+        /// Vorlauf der Warteschlange in Sekunden (<see cref="ChunkCount"/> × <see
+        /// cref="ChunkMs"/>). So lange dauert es, bis eine gesetzte Lautstärke zu hören
+        /// ist - und so viel fertig gemischter Ton geht verloren, wenn <see cref="Stop"/>
+        /// die Warteschlange verwirft. Wer über dieses Gerät blendet, muss beides kennen.
+        /// </summary>
+        public const double QueueSeconds = ChunkCount * ChunkMs / 1000.0;
+
         private static readonly IntPtr WaveMapper = new(-1);
         private const int CallbackEvent = 0x00050000;
         private const short WaveFormatPcm = 1;
@@ -201,6 +209,24 @@ namespace Snake_Spiel.Game
         public void SetVolume(double volume)
         {
             _volume = Math.Clamp(volume, 0.0, 1.0);
+        }
+
+        /// <summary>
+        /// Die Kurve für eine Überblendung zweier Stücke. Nicht linear, sondern über
+        /// Sinus und Kosinus: Bei einer linearen Blende haben in der Mitte beide Seiten
+        /// den halben Pegel, zusammen also die halbe <em>Leistung</em> - man hört dort
+        /// ein Loch. Mit dieser Kurve gilt an jeder Stelle
+        /// <c>von² + nach² = 1</c>, die Summe bleibt also konstant laut.
+        /// Gilt, solange die beiden Stücke nicht dasselbe Signal sind - hier stehen sie
+        /// nur im selben Akkord, das genügt.
+        /// </summary>
+        /// <param name="progress">0 = ganz das erste Stück, 1 = ganz das zweite.</param>
+        public static void Crossfade(double progress, out double from, out double to)
+        {
+            double p = Math.Clamp(progress, 0.0, 1.0);
+            double angle = p * Math.PI / 2.0;
+            from = Math.Cos(angle);
+            to = Math.Sin(angle);
         }
 
         public void Pause()

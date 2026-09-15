@@ -16,7 +16,13 @@ namespace Snake_Spiel.Game
         Hardcore,
 
         /// <summary>Futter verfällt doppelt so schnell, Schlange rot.</summary>
-        Impossible
+        Impossible,
+
+        /// <summary>
+        /// Verflucht: Die Schlange wird schwarz, die Wände töten, das Futter verfällt
+        /// noch schneller - und wer dreimal hintereinander kein Futter erwischt, verhungert.
+        /// </summary>
+        Cursed
     }
 
     /// <summary>
@@ -34,7 +40,9 @@ namespace Snake_Spiel.Game
             int speedUpEveryFood,
             int speedUpMs,
             int hardcoreLevel = 0,
-            int impossibleLevel = 0)
+            int impossibleLevel = 0,
+            int cursedLevel = 0,
+            int winLevel = 0)
         {
             Key = key;
             DisplayName = displayName;
@@ -45,6 +53,8 @@ namespace Snake_Spiel.Game
             SpeedUpMs = speedUpMs;
             HardcoreLevel = hardcoreLevel;
             ImpossibleLevel = impossibleLevel;
+            CursedLevel = cursedLevel;
+            WinLevel = winLevel;
         }
 
         /// <summary>Stabiler Schlüssel für die Highscore-Datei - nicht übersetzen.</summary>
@@ -71,9 +81,32 @@ namespace Snake_Spiel.Game
         /// <summary>Ab diesem Level wird es unmöglich; 0 bedeutet nie.</summary>
         public int ImpossibleLevel { get; }
 
+        /// <summary>Ab diesem Level ist der Lauf verflucht; 0 bedeutet nie.</summary>
+        public int CursedLevel { get; }
+
+        /// <summary>
+        /// Das Level, mit dem dieser Modus abgeschlossen ist; 0 bedeutet: es hört nie auf.
+        /// Geschafft hat, wer das letzte Futter dieses Levels frisst - siehe
+        /// <see cref="WinFoodCount"/>. Seit 1.7.0 hat jeder Modus ein Ende, weil jeder
+        /// den nächsten freischaltet; nur beim letzten ist das Ende auch das Ende des
+        /// Spiels.
+        /// </summary>
+        public int WinLevel { get; }
+
         public bool HasHardcore => HardcoreLevel > 0;
 
         public bool HasImpossible => ImpossibleLevel > 0;
+
+        public bool HasCursed => CursedLevel > 0;
+
+        public bool IsWinnable => WinLevel > 0;
+
+        /// <summary>
+        /// So viele Happen braucht der Sieg: das letzte Futter von <see cref="WinLevel"/>.
+        /// Level n umfasst die Happen (n-1)*S bis n*S-1; mit dem n*S-ten ist es geschafft.
+        /// 0, wenn dieser Grad kein Ende hat.
+        /// </summary>
+        public int WinFoodCount => IsWinnable ? WinLevel * SpeedUpEveryFood : 0;
 
         // Wichtig: Key wird als Schlüssel in der Highscore-Datei benutzt und darf
         // sich nie ändern - sonst sind alle gespeicherten Rekorde verloren.
@@ -83,15 +116,18 @@ namespace Snake_Spiel.Game
         // sondern eine Anlaufstrecke.
         private const int TopSpeedMs = 42;
 
+        // Die drei Modi bilden seit 1.7.0 eine Kette: Jeder schaltet den nächsten frei,
+        // und es ist immer nur einer spielbar. Subtitle ist das Wort, das im Menü klein
+        // unter dem START-Knopf steht.
         public static Difficulty Easy { get; } =
-            new("easy", "LANGSAM", "Gemütlich - zum Warmwerden", 145, TopSpeedMs, 5, 4);
+            new("easy", "TUTORIAL", "Tutorial", 145, TopSpeedMs, 5, 4, winLevel: 10);
 
         public static Difficulty Normal { get; } =
-            new("normal", "NORMAL", "Klassisches Snake-Tempo", 110, TopSpeedMs, 4, 5);
+            new("normal", "KLASSISCH", "Klassisch", 110, TopSpeedMs, 4, 5, winLevel: 15);
 
         public static Difficulty Hard { get; } =
-            new("hard", "SCHNELL", "Für Leute mit schnellen Fingern", 78, TopSpeedMs, 3, 4,
-                hardcoreLevel: 10, impossibleLevel: 15);
+            new("hard", "ERWEITERT", "Erweitert", 78, TopSpeedMs, 3, 4,
+                hardcoreLevel: 10, impossibleLevel: 15, cursedLevel: 20, winLevel: 25);
 
         public static IReadOnlyList<Difficulty> All { get; } = new[] { Easy, Normal, Hard };
 
@@ -119,10 +155,24 @@ namespace Snake_Spiel.Game
         /// <summary>Anzeige-Level, beginnend bei 1.</summary>
         public int LevelFor(int foodEaten) => (foodEaten / SpeedUpEveryFood) + 1;
 
+        /// <summary>
+        /// Wie weit ein Lauf mit dieser Punktzahl eskaliert war. Punkte gibt es nur für
+        /// Futter und immer gleich viele (<see cref="GameEngine.PointsPerFood"/>), deshalb
+        /// lässt sich aus einem gespeicherten Highscore zurückrechnen, wie weit er kam -
+        /// die Stufe muss dafür nirgends mitgespeichert werden.
+        /// </summary>
+        public EscalationStage StageForScore(int score)
+            => score <= 0 ? EscalationStage.Normal : StageFor(score / GameEngine.PointsPerFood);
+
         /// <summary>Wie weit der Lauf nach so vielen Happen eskaliert ist.</summary>
         public EscalationStage StageFor(int foodEaten)
         {
             int level = LevelFor(foodEaten);
+
+            if (HasCursed && level >= CursedLevel)
+            {
+                return EscalationStage.Cursed;
+            }
 
             if (HasImpossible && level >= ImpossibleLevel)
             {
@@ -142,6 +192,9 @@ namespace Snake_Spiel.Game
 
         /// <summary>Wie viele Happen bis zur Stufe Unmöglich nötig sind.</summary>
         public int FoodUntilImpossible => HasImpossible ? (ImpossibleLevel - 1) * SpeedUpEveryFood : 0;
+
+        /// <summary>Wie viele Happen bis zur Stufe Verflucht nötig sind.</summary>
+        public int FoodUntilCursed => HasCursed ? (CursedLevel - 1) * SpeedUpEveryFood : 0;
 
         /// <summary>Nach wie vielen Happen das Endtempo erreicht ist.</summary>
         public int FoodUntilTopSpeed

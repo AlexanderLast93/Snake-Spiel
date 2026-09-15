@@ -28,8 +28,17 @@ internal static class Program
         FuzzInterpolationInvariant();
         MenuMusicTests();
         SeamlessLoopTests();
+        MusicCrossfadeTests();
         IntroTests();
         SettingsTests();
+        ProgressionTests();
+        ScoreStageTests();
+        CursedStageTests();
+        FoodDecayTests();
+        VictoryTests();
+        CursedSoundTests();
+        FastForwardTests();
+        CursedIsBeatable();
         NoWpfReference();
 
         Console.WriteLine();
@@ -687,6 +696,38 @@ internal static class Program
         Check("Volle Lautstärke lässt auch die Extremwerte unverändert (kein Überlauf)",
             quiet[2] == short.MaxValue && quiet[3] == short.MinValue);
 
+        // --- Überblendung Intro -> Menümusik (1.6.0) ---
+        WaveOutMusic.Crossfade(0.0, out double startFrom, out double startTo);
+        WaveOutMusic.Crossfade(1.0, out double endFrom, out double endTo);
+        Check("Am Anfang läuft nur das Intro", Math.Abs(startFrom - 1.0) < 1e-9 && Math.Abs(startTo) < 1e-9);
+        Check("Am Ende läuft nur die Musik", Math.Abs(endFrom) < 1e-9 && Math.Abs(endTo - 1.0) < 1e-9);
+
+        // Der ganze Zweck der Kurve: In der Mitte stehen beide auf 0,707, nicht auf 0,5.
+        // Bei einer linearen Blende wäre dort die Leistung halbiert - man hört ein Loch.
+        WaveOutMusic.Crossfade(0.5, out double midFrom, out double midTo);
+        Check($"In der Mitte steht jede Seite auf 0,707 statt 0,5 ({midFrom:0.000})",
+            Math.Abs(midFrom - Math.Sqrt(0.5)) < 1e-9 && Math.Abs(midTo - Math.Sqrt(0.5)) < 1e-9);
+
+        double worstPower = 0.0;
+        bool monotone = true;
+        double lastTo = -1.0;
+        for (int i = 0; i <= 200; i++)
+        {
+            WaveOutMusic.Crossfade(i / 200.0, out double from, out double to);
+            worstPower = Math.Max(worstPower, Math.Abs(((from * from) + (to * to)) - 1.0));
+            monotone &= to >= lastTo;
+            lastTo = to;
+        }
+
+        Check($"Die Leistung bleibt über die ganze Blende konstant (Abweichung {worstPower:0.0000000})",
+            worstPower < 1e-9);
+        Check("Die Musik wird über die Blende nur lauter, nie wieder leiser", monotone);
+
+        WaveOutMusic.Crossfade(-2.0, out double underFrom, out _);
+        WaveOutMusic.Crossfade(5.0, out _, out double overTo);
+        Check("Werte außerhalb von 0 bis 1 werden begrenzt",
+            Math.Abs(underFrom - 1.0) < 1e-9 && Math.Abs(overTo - 1.0) < 1e-9);
+
         var ramp = new short[100];
         for (int i = 0; i < ramp.Length; i++)
         {
@@ -708,7 +749,7 @@ internal static class Program
     /// </summary>
     private static void IntroTests()
     {
-        Section("Intro: Tonspur und Sprecher (1.5.0)");
+        Section("Intro: Tonspur (Fanfare statt Sprecher, 1.6.0)");
 
         // --- Fahrplan ---
         double[] marks =
@@ -717,10 +758,10 @@ internal static class Program
             SoundBank.IntroTimeline.Crawl,
             SoundBank.IntroTimeline.Impact,
             SoundBank.IntroTimeline.Title,
-            SoundBank.IntroTimeline.VoiceSnake,
+            SoundBank.IntroTimeline.Hook,
             SoundBank.IntroTimeline.Swoosh,
             SoundBank.IntroTimeline.Subtitle,
-            SoundBank.IntroTimeline.VoiceEdition,
+            SoundBank.IntroTimeline.Answer,
             SoundBank.IntroTimeline.FadeOut,
             SoundBank.IntroTimeline.End
         };
@@ -732,9 +773,15 @@ internal static class Program
         }
 
         Check("Fahrplan läuft streng vorwärts", increasing);
-        Check("Titel steht nach dem Einschlag, Stimme danach",
+        Check("Titel steht nach dem Einschlag, Fanfare danach",
             SoundBank.IntroTimeline.Title > SoundBank.IntroTimeline.Impact
-            && SoundBank.IntroTimeline.VoiceSnake > SoundBank.IntroTimeline.Title);
+            && SoundBank.IntroTimeline.Hook > SoundBank.IntroTimeline.Title);
+
+        // Der verborgene Puls des Fahrplans: Einschlag bis Untertitel sind genau vier
+        // Takte. Verschiebt jemand eine der beiden Marken, läuft die Musik am Bild
+        // vorbei - und genau das soll hier auffallen.
+        double span = SoundBank.IntroTimeline.Subtitle - SoundBank.IntroTimeline.Impact;
+        Check($"Einschlag bis Untertitel sind vier Schläge ({span:0.000} s)", Math.Abs(span - (4 * 0.425)) < 1e-9);
 
         byte[] wav = SoundBank.Intro();
         short[] samples = WavSamples(wav);
@@ -751,61 +798,1047 @@ internal static class Program
 
         Check($"Ausgesteuert, aber nicht angeschlagen (Spitze {peak:0.000})", peak is > 0.5 and <= 0.95);
 
-        // --- Pegel der Abschnitte: Der Sprecher muss über dem Teppich stehen ---
+        // --- Pegel der Abschnitte ---
         double riser = SectionRms(samples, 0.10, 1.20);
         double impact = SectionRms(samples, SoundBank.IntroTimeline.Impact, SoundBank.IntroTimeline.Impact + 0.20);
-        double call = SectionRms(samples, SoundBank.IntroTimeline.VoiceSnake + 0.1, SoundBank.IntroTimeline.Swoosh - 0.1);
-        double edition = SectionRms(samples, SoundBank.IntroTimeline.VoiceEdition + 0.1, SoundBank.IntroTimeline.FadeOut - 0.1);
+        double call = SectionRms(samples, SoundBank.IntroTimeline.Hook + 0.1, SoundBank.IntroTimeline.Swoosh - 0.1);
+        double answer = SectionRms(samples, SoundBank.IntroTimeline.Answer + 0.1, SoundBank.IntroTimeline.FadeOut - 0.1);
 
         Check($"Der Aufzug bleibt unter dem Einschlag ({riser:0.000} < {impact:0.000})", riser < impact);
-        Check($"\"Snake\" ist deutlich zu hören (RMS {call:0.000})", call > 0.08);
-        Check($"\"Alexander Last Edition\" ebenso (RMS {edition:0.000})", edition > 0.06);
-        Check($"Beide Ansagen liegen im selben Bereich (Verhältnis {call / edition:0.00})",
-            call / edition is > 0.5 and < 2.0);
+        Check($"Die Fanfare trägt (RMS {call:0.000})", call > 0.08);
+        Check($"Die Antwortphrase ebenso (RMS {answer:0.000})", answer > 0.06);
+        Check($"Beide Phrasen liegen im selben Bereich (Verhältnis {call / answer:0.00})",
+            call / answer is > 0.5 and < 2.0);
 
-        // --- Der Sprecher selbst ---
-        var speech = new Speech(2026);
-        float[] buffer = Synth.CreateBuffer(2.0);
-        var word = new List<Utterance> { new("S", 0.20), new("N", 0.10), new("EY", 0.90), new("K", 0.11) };
-        double spoken = speech.Say(buffer, 0.10, word, 145, 104, 1.0, 0.9);
+        // Nirgends ein Loch: Zwischen Einschlag und Abblenden darf keine halbe Sekunde
+        // still sein. Genau das war die Gefahr, als der Sprecher herausgenommen wurde.
+        double quietest = double.MaxValue;
+        double quietestAt = 0.0;
+        for (double from = SoundBank.IntroTimeline.Impact; from + 0.5 < SoundBank.IntroTimeline.FadeOut; from += 0.1)
+        {
+            double level = SectionRms(samples, from, from + 0.5);
+            if (level < quietest)
+            {
+                quietest = level;
+                quietestAt = from;
+            }
+        }
 
-        Check($"Gesprochene Länge stimmt ({spoken:0.00} s)", Math.Abs(spoken - 1.31) < 0.001);
-        Check("Vor dem ersten Laut ist Stille", BufferRms(buffer, 0.0, 0.09) < 0.001);
+        Check($"Kein totes Loch nach dem Einschlag (leiseste halbe Sekunde bei {quietestAt:0.0} s: RMS {quietest:0.000})",
+            quietest > 0.04);
 
-        // Im gehaltenen Vokal müssen zwei Formanten stehen: einer um 500 Hz, einer um
-        // 1900 Hz, und dazwischen muss es leiser sein. Genau daran hängt, ob ein Ohr
-        // "Snake" hört und nicht ein Summen.
-        double vowelAt = 0.10 + 0.20 + 0.10 + 0.35;
-        double firstFormant = Goertzel(buffer, vowelAt, 0.05, 500);
-        double valley = Goertzel(buffer, vowelAt, 0.05, 1200);
-        double secondFormant = Goertzel(buffer, vowelAt, 0.05, 1900);
+        // Die Tonspur muss beim Bildende noch klingen - sonst gäbe es nichts, was in die
+        // Menümusik hinüberblenden könnte, und der Übergang wäre wieder ein Schnitt.
+        double atHandover = SectionRms(samples, SoundBank.IntroTimeline.FadeOut, SoundBank.IntroTimeline.End);
+        Check($"Beim Übergeben klingt das Intro noch (RMS {atHandover:0.000})", atHandover > 0.01);
 
-        Check($"Erster Formant steht (500 Hz {firstFormant:0.000} über Tal 1200 Hz {valley:0.000})",
-            firstFormant > valley * 2.0);
-        Check($"Zweiter Formant steht (1900 Hz {secondFormant:0.000} über Tal)", secondFormant > valley);
+        // Die Fanfare endet auf der Oktave a - sie muss dort auch messbar stehen.
+        float[] intro = ToFloat(samples);
+        double octaveA = Goertzel(intro, SoundBank.IntroTimeline.Hook + 0.90, 0.25, Synth.NoteToHz(81));
+        double halfStepOff = Goertzel(intro, SoundBank.IntroTimeline.Hook + 0.90, 0.25, Synth.NoteToHz(80));
+        Check($"Die Fanfare bleibt auf dem hohen a stehen ({octaveA:0.00000} über {halfStepOff:0.00000})",
+            octaveA > halfStepOff);
 
-        // Das "s" lebt oben, der Vokal unten - sonst klingt das "s" wie ein Brummen.
-        double hissHigh = Goertzel(buffer, 0.18, 0.05, 6200);
-        double hissLow = Goertzel(buffer, 0.18, 0.05, 500);
-        Check($"Das \"s\" ist ein Zischen, kein Ton ({hissHigh:0.000} oben gegen {hissLow:0.000} unten)",
-            hissHigh > hissLow);
-
-        // Dunklere Stimme: gleiche Laute, tiefere Formanten.
-        float[] dark = Synth.CreateBuffer(2.0);
-        speech.Say(dark, 0.10, word, 96, 82, 0.90, 0.9);
-        double darkFirst = Goertzel(dark, vowelAt, 0.05, 450);
-        double brightAt450 = Goertzel(buffer, vowelAt, 0.05, 450);
-        Check($"Die dunkle Stimme hat mehr Gewicht unten ({darkFirst:0.000} gegen {brightAt450:0.000})",
-            darkFirst > brightAt450);
-
-        Check("Unbekannte Laute stürzen nicht ab, sie schweigen",
-            speech.Say(Synth.CreateBuffer(0.5), 0.0, new List<Utterance> { new("ÖÖ", 0.2) }, 120, 110) > 0.0);
-
-        Check("Über das Pufferende hinaus wird nichts geschrieben",
-            speech.Say(Synth.CreateBuffer(0.2), 0.15, word, 120, 110) > 0.0);
+        // Der Sprachbaukasten ist mit 1.6.0 aus dem Projekt geflogen. Diese Prüfung
+        // bleibt als Wächter: Sie misst die Tonspur selbst, nicht den Code.
+        Check("Im Vorspann steckt keine Stimme mehr", !IntroUsesSpeech());
     }
 
     /// <summary>Effektivwert eines Abschnitts der Tonspur (in Sekunden).</summary>
+
+    // ------------------------------------------------------------------
+    // Stufe Verflucht (1.6.0)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Die Kette der Modi (1.7.0): Tutorial schaltet Klassisch frei, Klassisch schaltet
+    /// Erweitert frei, und mehr gibt es nicht. Es ist immer nur einer spielbar.
+    /// </summary>
+    private static void ProgressionTests()
+    {
+        Section("Kette der Modi: Tutorial, Klassisch, Erweitert (1.7.0)");
+
+        // --- Jeder Modus hat jetzt ein Ende ---
+        Check($"Tutorial endet mit Level 10 nach {Difficulty.Easy.WinFoodCount} Happen",
+            Difficulty.Easy.IsWinnable && Difficulty.Easy.WinLevel == 10 && Difficulty.Easy.WinFoodCount == 50);
+        Check($"Klassisch endet mit Level 15 nach {Difficulty.Normal.WinFoodCount} Happen",
+            Difficulty.Normal.IsWinnable && Difficulty.Normal.WinLevel == 15 && Difficulty.Normal.WinFoodCount == 60);
+        Check($"Erweitert endet mit Level 25 nach {Difficulty.Hard.WinFoodCount} Happen",
+            Difficulty.Hard.IsWinnable && Difficulty.Hard.WinLevel == 25 && Difficulty.Hard.WinFoodCount == 75);
+        Check("Die Kette wird länger, nicht kürzer",
+            Difficulty.Easy.WinFoodCount < Difficulty.Normal.WinFoodCount
+            && Difficulty.Normal.WinFoodCount < Difficulty.Hard.WinFoodCount);
+
+        // Die Schlüssel stehen in der Highscore-Datei. Wer sie umbenennt, wirft alles weg.
+        Check("Die Schlüssel sind unverändert geblieben",
+            Difficulty.Easy.Key == "easy" && Difficulty.Normal.Key == "normal" && Difficulty.Hard.Key == "hard");
+        Check("Die Anzeigenamen sind neu",
+            Difficulty.Easy.DisplayName == "TUTORIAL"
+            && Difficulty.Normal.DisplayName == "KLASSISCH"
+            && Difficulty.Hard.DisplayName == "ERWEITERT");
+
+        // --- Die Zuordnung Stufe -> Grad ---
+        Check("Tutorial spielt LANGSAM", ReferenceEquals(GameSettings.DifficultyFor(ProgressStage.Tutorial), Difficulty.Easy));
+        Check("Klassisch spielt NORMAL", ReferenceEquals(GameSettings.DifficultyFor(ProgressStage.Classic), Difficulty.Normal));
+        Check("Erweitert spielt SCHNELL", ReferenceEquals(GameSettings.DifficultyFor(ProgressStage.Advanced), Difficulty.Hard));
+
+        string directory = Path.Combine(Path.GetTempPath(), "SnakeSpiel-Tests", Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(directory, "settings.json");
+        string scores = Path.Combine(directory, "highscores.json");
+
+        try
+        {
+            // --- Jeder fängt beim Tutorial an ---
+            var fresh = new GameSettings(path);
+            Check("Ohne Datei fängt der Spieler beim Tutorial an", fresh.Progress == ProgressStage.Tutorial);
+            Check("Und START startet das Tutorial", ReferenceEquals(fresh.CurrentDifficulty, Difficulty.Easy));
+
+            Check("Tutorial schaltet Klassisch frei", fresh.AdvanceProgress() && fresh.Progress == ProgressStage.Classic);
+            Check("Klassisch schaltet Erweitert frei", fresh.AdvanceProgress() && fresh.Progress == ProgressStage.Advanced);
+            Check("Danach gibt es nichts mehr", !fresh.AdvanceProgress() && fresh.Progress == ProgressStage.Advanced);
+
+            fresh.MarkCompleted();
+            fresh.Save();
+            Check("Der Fortschritt überlebt den Neustart", new GameSettings(path).Progress == ProgressStage.Advanced);
+
+            // --- Zurücksetzen nimmt den Fortschritt, nicht die Auszeichnung ---
+            var reloaded = new GameSettings(path);
+            reloaded.ResetProgress();
+            Check("Zurücksetzen führt ans Tutorial", reloaded.Progress == ProgressStage.Tutorial);
+            Check("Die Krone bleibt trotzdem auf", reloaded.Completed);
+            reloaded.Save();
+            Check("Und beides übersteht den Neustart",
+                SaveAndReload(reloaded).Progress == ProgressStage.Tutorial && SaveAndReload(reloaded).Completed);
+
+            // Datei aus 1.6.0: kein "progress"-Feld. Auch wer schon alles gespielt hat,
+            // fängt in der neuen Kette beim Tutorial an - das ist Absicht, kein Fehler.
+            File.WriteAllText(path, "{ \"musicVolume\": 0.5, \"completed\": true }");
+            var legacy = new GameSettings(path);
+            Check("Datei aus 1.6.0 ohne Feld: zurück ans Tutorial, Krone bleibt",
+                legacy.Progress == ProgressStage.Tutorial && legacy.Completed);
+
+            // Unsinn in der Datei darf nicht in einen unbekannten Zustand führen.
+            File.WriteAllText(path, "{ \"progress\": 47 }");
+            Check("Ein unbekannter Wert fällt auf das Tutorial zurück",
+                new GameSettings(path).Progress == ProgressStage.Tutorial);
+
+            // --- Freischalten löscht den Highscore des abgeschlossenen Modus ---
+            var highScores = new HighScoreService(scores);
+            highScores.TrySubmit("easy", 840);
+            highScores.TrySubmit("normal", 550);
+            Check("Gelöscht wird genau ein Grad",
+                highScores.Clear("easy") && highScores.GetHighScore("easy") == 0 && highScores.GetHighScore("normal") == 550);
+            Check("Zweimal löschen meldet, dass nichts mehr da war", !highScores.Clear("easy"));
+            Check("Das Löschen steht auch in der Datei",
+                new HighScoreService(scores).GetHighScore("easy") == 0 && new HighScoreService(scores).GetHighScore("normal") == 550);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception)
+            {
+                // Aufräumen ist Kür.
+            }
+        }
+
+        // --- Die Maschine hinter dem Ziel: der letzte Happen zählt, nicht der vorletzte ---
+        foreach (Difficulty difficulty in Difficulty.All)
+        {
+            var engine = new GameEngine(40, 32) { WinFoodCount = difficulty.WinFoodCount };
+            int reached = engine.FastForward(difficulty.WinFoodCount + 10);
+
+            Check($"{difficulty.Subtitle}: Vorspulen hält einen Happen vor dem Ziel an ({engine.FoodEaten} von {difficulty.WinFoodCount})",
+                engine.FoodEaten == difficulty.WinFoodCount - 1 && reached > 0);
+            Check($"{difficulty.Subtitle}: und der Lauf ist dabei nicht zu Ende",
+                !engine.IsFinished && engine.Ending == EndCause.None);
+        }
+    }
+
+    /// <summary>
+    /// Die Punktzahl im Menü trägt an, wie weit der beste Lauf kam. Die Stufe steht
+    /// nirgends gespeichert - sie wird aus dem Highscore zurückgerechnet. Das geht nur,
+    /// solange es für nichts außer Futter Punkte gibt und immer gleich viele.
+    /// </summary>
+    private static void ScoreStageTests()
+    {
+        Section("Highscore verrät die Stufe (1.7.0)");
+
+        // Die Grundannahme, auf der alles steht: ein Happen, PointsPerFood Punkte.
+        var engine = new GameEngine(25, 20, seed: 4);
+        int before = engine.Score;
+        engine.FastForward(1);
+        Check($"Ein Happen bringt genau {GameEngine.PointsPerFood} Punkte (war {engine.Score - before})",
+            engine.Score - before == GameEngine.PointsPerFood);
+        engine.FastForward(6);
+        Check($"Sieben Happen bringen {7 * GameEngine.PointsPerFood} Punkte (war {engine.Score})",
+            engine.Score == 7 * GameEngine.PointsPerFood);
+
+        Difficulty hard = Difficulty.Hard;
+        int points = GameEngine.PointsPerFood;
+
+        Check("Ohne Punkte keine Stufe", hard.StageForScore(0) == EscalationStage.Normal);
+        Check("Ein unmöglicher Minuswert fällt auf die Grundstufe", hard.StageForScore(-50) == EscalationStage.Normal);
+
+        // Die Grenzen, jeweils der letzte Punktestand davor und der erste danach.
+        Check($"{(hard.FoodUntilHardcore - 1) * points} Punkte sind noch die Grundstufe",
+            hard.StageForScore((hard.FoodUntilHardcore - 1) * points) == EscalationStage.Normal);
+        Check($"{hard.FoodUntilHardcore * points} Punkte heißen Hardcore",
+            hard.StageForScore(hard.FoodUntilHardcore * points) == EscalationStage.Hardcore);
+        Check($"{(hard.FoodUntilImpossible - 1) * points} Punkte sind noch Hardcore",
+            hard.StageForScore((hard.FoodUntilImpossible - 1) * points) == EscalationStage.Hardcore);
+        Check($"{hard.FoodUntilImpossible * points} Punkte heißen Unmöglich",
+            hard.StageForScore(hard.FoodUntilImpossible * points) == EscalationStage.Impossible);
+        Check($"{(hard.FoodUntilCursed - 1) * points} Punkte sind noch Unmöglich",
+            hard.StageForScore((hard.FoodUntilCursed - 1) * points) == EscalationStage.Impossible);
+        Check($"{hard.FoodUntilCursed * points} Punkte heißen Verflucht",
+            hard.StageForScore(hard.FoodUntilCursed * points) == EscalationStage.Cursed);
+
+        // Ein durchgespielter Lauf liegt sicher im schwarzen Bereich.
+        Check($"Der Sieg ({hard.WinFoodCount * points} Punkte) steht tief in Verflucht",
+            hard.StageForScore(hard.WinFoodCount * points) == EscalationStage.Cursed);
+
+        // In Tutorial und Klassisch gibt es keine Eskalation - egal wie hoch der Stand ist.
+        Check("Das Tutorial bleibt immer bei der Grundstufe",
+            Difficulty.Easy.StageForScore(99999) == EscalationStage.Normal);
+        Check("Klassisch auch",
+            Difficulty.Normal.StageForScore(99999) == EscalationStage.Normal);
+
+        // Zwischenwerte dürfen nicht durchrutschen: ein halber Happen zählt nicht.
+        Check("Punkte zwischen zwei Happen ändern die Stufe nicht",
+            hard.StageForScore((hard.FoodUntilHardcore * points) - 1) == EscalationStage.Normal
+            && hard.StageForScore((hard.FoodUntilHardcore * points) + (points - 1)) == EscalationStage.Hardcore);
+    }
+
+    private static void CursedStageTests()
+    {
+        Section("Verflucht: Stufen und Ziel");
+
+        Difficulty hard = Difficulty.Hard;
+        Check("Schnell wird ab Level 20 verflucht", hard.HasCursed && hard.CursedLevel == 20);
+        Check("Schnell endet mit Level 25", hard.IsWinnable && hard.WinLevel == 25);
+        Check($"Der Sieg kostet 75 Happen (war {hard.WinFoodCount})", hard.WinFoodCount == 75);
+        Check($"Verflucht beginnt beim 57. Happen (war {hard.FoodUntilCursed})", hard.FoodUntilCursed == 57);
+
+        Check("Tutorial und Klassisch bleiben ohne Fluch", !Difficulty.Easy.HasCursed && !Difficulty.Normal.HasCursed);
+        Check("Tutorial und Klassisch eskalieren überhaupt nicht",
+            !Difficulty.Easy.HasHardcore && !Difficulty.Easy.HasImpossible
+            && !Difficulty.Normal.HasHardcore && !Difficulty.Normal.HasImpossible);
+
+        // Die Grenzen der Stufen, jeweils der letzte Happen davor und der erste danach.
+        Check("Level 19 ist noch unmöglich", hard.StageFor(hard.FoodUntilCursed - 1) == EscalationStage.Impossible);
+        Check("Level 20 ist verflucht", hard.StageFor(hard.FoodUntilCursed) == EscalationStage.Cursed);
+        Check("Level 25 ist immer noch verflucht", hard.StageFor(24 * 3) == EscalationStage.Cursed);
+        Check("Level 14 ist hardcore", hard.StageFor(13 * 3) == EscalationStage.Hardcore);
+        Check("Level 15 ist unmöglich", hard.StageFor(14 * 3) == EscalationStage.Impossible);
+        Check("Die Stufen kommen der Reihe nach (Werte steigen an)",
+            EscalationStage.Normal < EscalationStage.Hardcore
+            && EscalationStage.Hardcore < EscalationStage.Impossible
+            && EscalationStage.Impossible < EscalationStage.Cursed);
+
+        Check("Level 20 in Normal bleibt harmlos", Difficulty.Normal.StageFor(19 * 4) == EscalationStage.Normal);
+    }
+
+    /// <summary>
+    /// Steckt im Vorspann noch eine Stimme? Gemessen wird der Bereich, in dem früher
+    /// "Alexander Last Edition" lag: Eine Stimme hat dort breite Energie in der Gegend
+    /// des zweiten Formanten (rund 1900 Hz), die Fanfare dagegen nicht - sie steht auf
+    /// klaren Tonhöhen. Die Prüfung hängt an keiner Klasse, sie hört hin; deshalb
+    /// überlebt sie das Löschen von Speech.cs.
+    /// </summary>
+    private static bool IntroUsesSpeech()
+    {
+        float[] intro = ToFloat(WavSamples(SoundBank.Intro()));
+        double formant = Goertzel(intro, 3.2, 0.6, 1900);
+        double tone = Goertzel(intro, 3.2, 0.6, Synth.NoteToHz(69));
+        return formant > tone;
+    }
+
+    /// <summary>Speichert und liest die Einstellungen frisch von der Platte.</summary>
+    private static GameSettings SaveAndReload(GameSettings settings)
+    {
+        settings.Save();
+        return new GameSettings(settings.FilePath);
+    }
+
+    /// <summary>
+    /// Verfallendes Futter - die einzige Sonderregel, die von den Eskalationsstufen
+    /// übrig geblieben ist. Grabsteine und Verhungern sind nach dem Spieltest wieder
+    /// geflogen; was hier steht, trägt Hardcore, Unmöglich und Verflucht allein.
+    /// </summary>
+    private static void FoodDecayTests()
+    {
+        Section("Verfallendes Futter");
+
+        var engine = new GameEngine(25, 20, seed: 41) { FoodLifetimeTicks = 6 };
+        GridPoint first = engine.Food;
+
+        Check("Frisches Futter ist ganz frisch", Math.Abs(engine.FoodFreshness - 1.0) < 1e-9);
+
+        for (int i = 0; i < 5; i++)
+        {
+            engine.Step();
+        }
+
+        Check("Kurz vor dem Verfall liegt es noch da", engine.Food == first && !engine.FoodRelocated);
+        Check($"Und es ist sichtbar alt ({engine.FoodFreshness:0.00})", engine.FoodFreshness < 0.25);
+
+        engine.Step();
+        Check("Nach sechs Schritten ist es weg", engine.Food != first);
+        Check("Der Schritt meldet den Wechsel", engine.FoodRelocated);
+        Check("Das neue Futter ist wieder frisch", Math.Abs(engine.FoodFreshness - 1.0) < 1e-9);
+        Check("Und es liegt nicht im Körper", !new HashSet<GridPoint>(engine.Snake).Contains(engine.Food));
+
+        // Über viele Wechsel hinweg darf nie Futter unter der Schlange auftauchen.
+        int inBody = 0;
+        int moves = 0;
+        for (int i = 0; i < 600 && !engine.IsFinished; i++)
+        {
+            engine.Step();
+            if (engine.FoodRelocated)
+            {
+                moves++;
+            }
+
+            if (new HashSet<GridPoint>(engine.Snake).Contains(engine.Food))
+            {
+                inBody++;
+            }
+        }
+
+        Check($"Das Futter ist oft umgezogen ({moves} mal)", moves > 20);
+        Check("Und nie im Körper gelandet", inBody == 0);
+
+        // Ohne Lebensdauer bleibt es einfach liegen.
+        var patient = new GameEngine(25, 20, seed: 42);
+        GridPoint stays = patient.Food;
+        for (int i = 0; i < 100 && !patient.IsFinished; i++)
+        {
+            patient.Step();
+            if (patient.Food != stays)
+            {
+                break;
+            }
+        }
+
+        Check("Ohne Lebensdauer verfällt nichts",
+            patient.Food == stays && !patient.FoodRelocated && Math.Abs(patient.FoodFreshness - 1.0) < 1e-9);
+    }
+
+    private static void VictoryTests()
+    {
+        Section("Ziel erreicht: der letzte Happen zählt");
+
+        // Klein gerechnet: Sieg nach fünf Happen, damit der Test in Millisekunden läuft.
+        var engine = new GameEngine(25, 20, seed: 9) { WinFoodCount = 5 };
+
+        int eaten = 0;
+        StepResult last = StepResult.Moved;
+        for (int i = 0; i < 20000 && !engine.IsFinished; i++)
+        {
+            // Kurs auf das Futter, ohne Rücksicht auf den eigenen Körper: bei fünf
+            // Happen ist die Schlange zu kurz, um sich selbst im Weg zu liegen.
+            GridPoint head = engine.Head;
+            GridPoint food = engine.Food;
+
+            if (food.X != head.X && engine.CurrentDirection is not (Direction.Left or Direction.Right))
+            {
+                engine.EnqueueDirection(food.X > head.X ? Direction.Right : Direction.Left);
+            }
+            else if (food.Y != head.Y && engine.CurrentDirection is not (Direction.Up or Direction.Down))
+            {
+                engine.EnqueueDirection(food.Y > head.Y ? Direction.Down : Direction.Up);
+            }
+
+            last = engine.Step();
+            if (last == StepResult.Ate)
+            {
+                eaten++;
+            }
+        }
+
+        Check("Der Lauf endet", engine.IsFinished);
+        Check("Er endet mit einem Sieg", last == StepResult.Won);
+        Check("Als Ursache steht das Ziel", engine.Ending == EndCause.Goal);
+        Check($"Genau fünf Happen (war {engine.FoodEaten})", engine.FoodEaten == 5);
+        Check($"Vier davon wurden als Ate gemeldet, der fünfte als Won (war {eaten})", eaten == 4);
+        Check("Nach dem Sieg liegt kein Futter mehr", !engine.HasFood);
+        Check("Vorher und jetzt sind gleich - die Schlange bleibt auf dem Zielfeld", SameList(engine.PreviousSnake, engine.Snake));
+        Check("Ein Schritt nach dem Sieg ändert nichts mehr", engine.Step() == StepResult.Died);
+
+        // Ohne Ziel läuft es weiter.
+        var endless = new GameEngine(25, 20, seed: 9);
+        Check("Ohne Ziel ist WinFoodCount 0", endless.WinFoodCount == 0);
+    }
+
+    /// <summary>
+    /// Die Prüfhilfe hinter F3/L. Sie fasst den Spielstand an, also muss sie
+    /// genauso geprüft werden wie alles andere - eine kaputte Testhilfe verdirbt
+    /// die Prüfung, für die sie da ist.
+    /// </summary>
+    private static void FastForwardTests()
+    {
+        Section("Prüfhilfe: Level vorspulen (F3 + L)");
+
+        var engine = new GameEngine(25, 20, seed: 21);
+        int startLength = engine.Snake.Count;
+        GridPoint food = engine.Food;
+
+        int added = engine.FastForward(15);
+        Check($"Fünfzehn Happen gutgeschrieben (war {added})", added == 15);
+        Check($"Zähler steht auf 15 (war {engine.FoodEaten})", engine.FoodEaten == 15);
+        Check($"Punkte stimmen: 150 (war {engine.Score})", engine.Score == 150);
+        Check($"Die Schlange ist um 15 gewachsen (war {engine.Snake.Count - startLength})",
+            engine.Snake.Count == startLength + 15);
+
+        var seen = new HashSet<GridPoint>(engine.Snake);
+        Check("Kein Feld doppelt belegt", seen.Count == engine.Snake.Count);
+        Check("Das Futter wurde nicht mit verschluckt", engine.HasFood && engine.Food == food && !seen.Contains(food));
+        Check("Vorher und jetzt sind gleich - der Sprung ruckelt nicht", SameList(engine.PreviousSnake, engine.Snake));
+
+        // Die Segmente müssen eine Kette bleiben, sonst zerfällt die Darstellung.
+        bool chained = true;
+        for (int i = 1; i < engine.Snake.Count; i++)
+        {
+            GridPoint a = engine.Snake[i - 1];
+            GridPoint b = engine.Snake[i];
+            int dx = Math.Min(Math.Abs(a.X - b.X), 25 - Math.Abs(a.X - b.X));
+            int dy = Math.Min(Math.Abs(a.Y - b.Y), 20 - Math.Abs(a.Y - b.Y));
+            chained &= dx + dy == 1;
+        }
+
+        Check("Jedes Segment liegt neben seinem Vorgänger", chained);
+
+        // Danach muss ganz normal weitergespielt werden können.
+        StepResult next = engine.Step();
+        Check("Nach dem Sprung läuft das Spiel weiter", next != StepResult.Died && !engine.IsFinished);
+
+        // Bei einem Grad mit Ziel bleibt genau ein Happen übrig.
+        var goal = new GameEngine(25, 20, seed: 22) { WinFoodCount = Difficulty.Hard.WinFoodCount };
+        int jumped = goal.FastForward(500);
+        Check($"Der Sprung hält vor dem letzten Happen an (Zähler {goal.FoodEaten}, Ziel {goal.WinFoodCount})",
+            goal.FoodEaten == goal.WinFoodCount - 1);
+        Check($"Er springt auch wirklich so weit (war {jumped})", jumped == goal.WinFoodCount - 1);
+        Check("Damit steht das Ziel-Level auf der Anzeige", Difficulty.Hard.LevelFor(goal.FoodEaten) == Difficulty.Hard.WinLevel);
+        Check("Und die Stufe ist Verflucht", Difficulty.Hard.StageFor(goal.FoodEaten) == EscalationStage.Cursed);
+        Check("Ein weiterer Sprung ändert nichts mehr", goal.FastForward(30) == 0);
+
+        // Der Sprung darf sich nicht bei bestimmten Startlagen einmauern - das war der
+        // Fehler der ersten Fassung, und er fiel nur auf, weil er hier gemessen wird.
+        int worst = int.MaxValue;
+        for (int seed = 0; seed < 60; seed++)
+        {
+            var probe = new GameEngine(25, 20, seed) { WinFoodCount = Difficulty.Hard.WinFoodCount };
+            probe.FastForward(500);
+            worst = Math.Min(worst, probe.FoodEaten);
+        }
+
+        Check($"Er kommt aus jeder Startlage bis ans Ziel (60 Läufe, schlechtester {worst})",
+            worst == Difficulty.Hard.WinFoodCount - 1);
+
+        // Unsinnige Eingaben und ein beendeter Lauf.
+        Check("Null Happen ändern nichts", engine.FastForward(0) == 0);
+        Check("Negative Happen ändern nichts", engine.FastForward(-5) == 0);
+
+        GameEngine dead = KillQuickly(new GameEngine(25, 20, seed: 23));
+        Check("Ein beendeter Lauf springt nicht mehr", dead.FastForward(10) == 0);
+    }
+
+    /// <summary>
+    /// Ein Bot, der immer den kürzesten Weg zum Futter fährt und vorher prüft, ob er
+    /// danach noch zu seinem eigenen Schwanz zurückfindet, spielt den kompletten Lauf
+    /// bis Level 25 durch. Er misst <em>nicht</em>, wie schwer die Stufe für einen
+    /// Menschen ist - dafür taugt nur eine Hand am Steuer. Er misst, ob der Weg bis
+    /// zum Ziel überhaupt offensteht und ob die Regeln zusammen funktionieren.
+    ///
+    /// Die Geschichte der Zahlen: Zuerst töteten in dieser Stufe die Wände und das Futter
+    /// verging nach 1,25 s - der Bot kam auf 68 %, ein Mensch (Alex, einen Tag lang) auf
+    /// null. Danach kamen Grabsteine und ein Verhungern-Zähler dazu; beides ist nach dem
+    /// Spieltest wieder geflogen, weil die Gräber ausgerechnet dort standen, wo man
+    /// hinwollte. Geblieben ist: offene Wände, 1,75 s Futterzeit, und die Schwierigkeit
+    /// kommt allein daraus, dass man die Schlange kaum sieht. Das kann diese Probe nicht
+    /// messen - sie prüft nur noch, dass der Weg bis Level 25 offensteht.
+    /// </summary>
+    private static void CursedIsBeatable()
+    {
+        Section("Verflucht: ist die Stufe zu gewinnen? (Bot-Probe)");
+
+        const int runs = 24;
+        int wins = 0;
+        int self = 0;
+        int bestLevel = 0;
+
+        for (int seed = 0; seed < runs; seed++)
+        {
+            EndCause end = PlayWithBot(seed, out int level);
+            bestLevel = Math.Max(bestLevel, level);
+
+            if (end == EndCause.Goal)
+            {
+                wins++;
+            }
+            else
+            {
+                self++;
+            }
+        }
+
+        double rate = (double)wins / runs;
+        Console.WriteLine($"     {runs} Läufe: {wins} Siege, {self} in sich selbst gefahren - bestes Level {bestLevel}");
+
+        Check($"Der Bot kommt bis in die Stufe Verflucht (bestes Level {bestLevel})", bestLevel >= 20);
+        Check($"Der Weg bis zum Ziel steht offen: Siegquote {rate:P0} (Grenze 90 %)", rate >= 0.90);
+        Check("Der Lauf endet nur noch am eigenen Körper oder am Ziel",
+            wins + self == runs);
+    }
+
+    /// <summary>
+    /// Spielt einen kompletten Lauf auf SCHNELL mit denselben Regeln wie die
+    /// Oberfläche sie setzt. Gibt zurück, wie der Lauf geendet ist.
+    /// </summary>
+    private static EndCause PlayWithBot(int seed, out int reachedLevel)
+    {
+        Difficulty difficulty = Difficulty.Hard;
+        var engine = new GameEngine(25, 20, seed) { WinFoodCount = difficulty.WinFoodCount };
+        reachedLevel = 1;
+
+        for (int step = 0; step < 200000 && !engine.IsFinished; step++)
+        {
+            // Die Oberfläche stellt vor jedem Schritt dieselben Regeln ein.
+            EscalationStage stage = difficulty.StageFor(engine.FoodEaten);
+            double seconds = stage switch
+            {
+                EscalationStage.Hardcore => 3.0,
+                EscalationStage.Impossible => 2.0,
+                EscalationStage.Cursed => 1.75,
+                _ => 0.0
+            };
+
+            int interval = difficulty.IntervalFor(engine.FoodEaten);
+            engine.FoodLifetimeTicks = seconds <= 0.0 ? 0 : Math.Max(4, (int)Math.Round(seconds * 1000.0 / interval));
+
+            reachedLevel = Math.Max(reachedLevel, difficulty.LevelFor(engine.FoodEaten));
+
+            Direction? move = BotMove(engine);
+            if (move.HasValue)
+            {
+                engine.EnqueueDirection(move.Value);
+            }
+
+            engine.Step();
+        }
+
+        return engine.Ending;
+    }
+
+    /// <summary>
+    /// Kürzester Weg zum Futter, aber nur, wenn der Kopf danach noch seinen eigenen
+    /// Schwanz erreichen kann - das ist die einfachste Regel, die verhindert, dass
+    /// sich die Schlange selbst einmauert. Findet sich kein solcher Weg, geht der Bot
+    /// in das Feld, von dem aus er am meisten Platz sieht.
+    /// </summary>
+    private static Direction? BotMove(GameEngine engine)
+    {
+        // Der eigene Körper, ohne den Schwanz - der rückt ja weg.
+        var body = new HashSet<GridPoint>();
+        for (int i = 0; i < engine.Snake.Count - 1; i++)
+        {
+            body.Add(engine.Snake[i]);
+        }
+
+        GridPoint head = engine.Head;
+
+        if (engine.HasFood)
+        {
+            GridPoint? first = FirstStepTo(engine, head, engine.Food, body);
+            if (first.HasValue)
+            {
+                // Probelauf: Wie sähe die Schlange nach diesem Zug aus?
+                var after = new List<GridPoint> { first.Value };
+                after.AddRange(engine.Snake);
+                if (first.Value != engine.Food)
+                {
+                    after.RemoveAt(after.Count - 1);
+                }
+
+                var blocked = new HashSet<GridPoint>();
+                for (int i = 1; i < after.Count - 1; i++)
+                {
+                    blocked.Add(after[i]);
+                }
+
+                if (after.Count < 6 || FirstStepTo(engine, first.Value, after[^1], blocked).HasValue)
+                {
+                    return ToDirection(engine, head, first.Value);
+                }
+            }
+        }
+
+        // Überleben: das Nachbarfeld mit dem größten erreichbaren Raum.
+        GridPoint? best = null;
+        int bestSpace = -1;
+
+        foreach (GridPoint next in Neighbours(engine, head))
+        {
+            if (body.Contains(next))
+            {
+                continue;
+            }
+
+            int space = FloodFill(engine, next, body);
+            if (space > bestSpace)
+            {
+                bestSpace = space;
+                best = next;
+            }
+        }
+
+        return best.HasValue ? ToDirection(engine, head, best.Value) : null;
+    }
+
+    private static IEnumerable<GridPoint> Neighbours(GameEngine engine, GridPoint from)
+    {
+        foreach (Direction direction in new[] { Direction.Right, Direction.Left, Direction.Down, Direction.Up })
+        {
+            yield return engine.NextHead(from, direction);
+        }
+    }
+
+    /// <summary>Breitensuche: der erste Schritt auf dem kürzesten Weg, oder null.</summary>
+    private static GridPoint? FirstStepTo(GameEngine engine, GridPoint from, GridPoint to, HashSet<GridPoint> blocked)
+    {
+        if (from == to)
+        {
+            return null;
+        }
+
+        var previous = new Dictionary<GridPoint, GridPoint> { [from] = from };
+        var queue = new Queue<GridPoint>();
+        queue.Enqueue(from);
+
+        while (queue.Count > 0)
+        {
+            GridPoint current = queue.Dequeue();
+            foreach (GridPoint next in Neighbours(engine, current))
+            {
+                if (previous.ContainsKey(next) || blocked.Contains(next))
+                {
+                    continue;
+                }
+
+                previous[next] = current;
+
+                if (next == to)
+                {
+                    GridPoint walk = next;
+                    while (previous[walk] != from)
+                    {
+                        walk = previous[walk];
+                    }
+
+                    return walk;
+                }
+
+                queue.Enqueue(next);
+            }
+        }
+
+        return null;
+    }
+
+    private static int FloodFill(GameEngine engine, GridPoint from, HashSet<GridPoint> blocked)
+    {
+        var seen = new HashSet<GridPoint> { from };
+        var queue = new Queue<GridPoint>();
+        queue.Enqueue(from);
+
+        while (queue.Count > 0)
+        {
+            foreach (GridPoint next in Neighbours(engine, queue.Dequeue()))
+            {
+                if (seen.Contains(next) || blocked.Contains(next))
+                {
+                    continue;
+                }
+
+                seen.Add(next);
+                queue.Enqueue(next);
+            }
+        }
+
+        return seen.Count;
+    }
+
+    private static Direction ToDirection(GameEngine engine, GridPoint from, GridPoint to)
+    {
+        foreach (Direction direction in new[] { Direction.Right, Direction.Left, Direction.Down, Direction.Up })
+        {
+            if (engine.NextHead(from, direction) == to)
+            {
+                return direction;
+            }
+        }
+
+        return engine.CurrentDirection;
+    }
+
+    // ------------------------------------------------------------------
+
+    private static void CursedSoundTests()
+    {
+        Section("Verflucht: Friedhofsmusik und Siegesklang");
+
+        byte[] wav = SoundBank.Music(SoundBank.CursedKey);
+        bool read = WaveOutMusic.TryReadPcm(wav, out short[] samples, out int rate, out _);
+        Check("Die Friedhofsmusik ist eine lesbare WAV", read && rate == Synth.SampleRate);
+
+        // Acht Takte zu vier Sekunden - 60 Schläge, ein Schlag je Sekunde.
+        int expected = Synth.SampleRate * 32;
+        Check($"Länge = acht Takte bei 60 BPM ({samples.Length} Samples)", samples.Length == expected);
+
+        double peak = 0.0;
+        double sum = 0.0;
+        foreach (short sample in samples)
+        {
+            double v = Math.Abs(sample / 32767.0);
+            peak = Math.Max(peak, v);
+            sum += v * v;
+        }
+
+        double rms = Math.Sqrt(sum / samples.Length);
+        Check($"Spitzenpegel um 0,64 (war {peak:0.000}) - das leiseste Stück im Spiel", peak is >= 0.55 and <= 0.72);
+        Check($"Nicht leer, nicht zerrend: RMS zwischen 0,06 und 0,30 (war {rms:0.000})", rms is >= 0.06 and <= 0.30);
+
+        double seam = Math.Abs((samples[^1] - samples[0]) / 32767.0);
+        Check($"Naht praktisch stetig (war {seam:0.0000})", seam < 0.01);
+
+        // Sie muss sich von der Musik der Stufe darunter unterscheiden - sonst hätte
+        // der Schlüssel einfach auf das Standardstück zurückgegriffen.
+        Check("Verflucht klingt nicht wie Unmöglich", wav.Length != SoundBank.Music(SoundBank.ImpossibleKey).Length);
+        Check("Sieben Musikschlüssel, sieben verschiedene Stücke", SevenDistinctTracks());
+
+        // Der Fluch steht in d-Moll: die kleine Terz (f) muss deutlich stärker sein
+        // als die große (fis). Gemessen über zwei Takte mitten im Stück.
+        float[] cursed = ToFloat(samples);
+        double minorThird = Goertzel(cursed, 1.0, 3.0, Synth.NoteToHz(53));   // f
+        double majorThird = Goertzel(cursed, 1.0, 3.0, Synth.NoteToHz(54));   // fis
+        Check($"Der Fluch steht in Moll: f {minorThird:0.00000} über fis {majorThird:0.00000}", minorThird > majorThird);
+
+        // --- Der Einstiegsklang ---
+        byte[] alarmWav = SoundBank.CursedAlarm();
+        Check("Der Fluch-Alarm ist eine lesbare WAV", WaveOutMusic.TryReadPcm(alarmWav, out short[] alarm, out _, out _));
+        Check($"Er dauert gut drei Sekunden (war {alarm.Length / (double)Synth.SampleRate:0.00} s)",
+            Math.Abs((alarm.Length / (double)Synth.SampleRate) - 3.20) < 0.05);
+        Check("Er fängt mit der Glocke an, nicht mit Stille", SectionRms(alarm, 0.0, 0.2) > 0.02);
+        Check("Er klingt aus, statt abgeschnitten zu werden", SectionRms(alarm, 3.1, 3.2) < SectionRms(alarm, 0.0, 0.2));
+        Check("Kein Umlauf: der allererste Wert ist Stille", Math.Abs(alarm[0] / 32767.0) < 0.02);
+
+        // --- Die Klänge der Stufe: Fressen und Aufstieg ---
+        byte[] eatWav = SoundBank.CursedEat();
+        Check("Der Grabstein-Happen ist eine lesbare WAV", WaveOutMusic.TryReadPcm(eatWav, out short[] eat, out _, out _));
+        Check($"Er bleibt kurz ({eat.Length / (double)Synth.SampleRate:0.00} s, Original 0,30 s)",
+            eat.Length / (double)Synth.SampleRate <= 0.45);
+        Check("Er schlägt sofort an", SectionRms(eat, 0.0, 0.05) > 0.05);
+        Check("Kein Umlauf: der allererste Wert ist Stille", Math.Abs(eat[0] / 32767.0) < 0.02);
+
+        byte[] upWav = SoundBank.CursedLevelUp();
+        Check("Der Verflucht-Aufstieg ist eine lesbare WAV", WaveOutMusic.TryReadPcm(upWav, out short[] up, out _, out _));
+        Check($"Er dauert 1,4 s ({up.Length / (double)Synth.SampleRate:0.00} s)",
+            Math.Abs((up.Length / (double)Synth.SampleRate) - 1.40) < 0.05);
+        Check("Kein Umlauf: der allererste Wert ist Stille", Math.Abs(up[0] / 32767.0) < 0.02);
+
+        // Beide müssen dunkler klingen als ihre Gegenstücke - sonst reißen sie in genau
+        // dem Augenblick aus der Stimmung, in dem sie gebraucht werden.
+        double darkEat = Brightness(eat);
+        double brightEat = Brightness(PcmOf(SoundBank.Eat()));
+        Check($"Der Grabstein-Happen klingt dumpfer als der normale ({darkEat:0.000} gegen {brightEat:0.000})",
+            darkEat < brightEat);
+
+        double darkUp = Brightness(up);
+        double brightUp = Brightness(PcmOf(SoundBank.LevelUp()));
+        Check($"Der Verflucht-Aufstieg klingt dumpfer als die Fanfare ({darkUp:0.000} gegen {brightUp:0.000})",
+            darkUp < brightUp);
+
+        // Der Aufstieg steht auf der kleinen Terz - dem Intervall der Glocke und
+        // der ganzen Friedhofsmusik.
+        float[] upBuffer = ToFloat(up);
+        double minor = Goertzel(upBuffer, 0.25, 0.5, Synth.NoteToHz(53));
+        double major = Goertzel(upBuffer, 0.25, 0.5, Synth.NoteToHz(54));
+        Check($"Der Aufstieg steht in Moll: f {minor:0.00000} über fis {major:0.00000}", minor > major);
+
+        byte[] recordWav = SoundBank.CursedNewRecord();
+        Check("Der Verflucht-Rekord ist eine lesbare WAV", WaveOutMusic.TryReadPcm(recordWav, out short[] record, out _, out _));
+        Check($"Er dauert 2,6 s ({record.Length / (double)Synth.SampleRate:0.00} s)",
+            Math.Abs((record.Length / (double)Synth.SampleRate) - 2.60) < 0.05);
+        Check("Er schlägt sofort an", SectionRms(record, 0.0, 0.1) > 0.05);
+        Check("Kein Umlauf: der allererste Wert ist Stille", Math.Abs(record[0] / 32767.0) < 0.02);
+        Check("Er klingt lange aus", SectionRms(record, 1.8, 2.5) > 0.004);
+
+        double darkRecord = Brightness(record);
+        double brightRecord = Brightness(PcmOf(SoundBank.NewRecord()));
+        Check($"Der Verflucht-Rekord klingt dumpfer als die Fanfare ({darkRecord:0.000} gegen {brightRecord:0.000})",
+            darkRecord < brightRecord);
+
+        // Und er steht in Moll, während die normale Fassung in Dur jubelt.
+        float[] recordBuffer = ToFloat(record);
+        double recMinor = Goertzel(recordBuffer, 0.6, 0.8, Synth.NoteToHz(53));
+        double recMajor = Goertzel(recordBuffer, 0.6, 0.8, Synth.NoteToHz(54));
+        Check($"Der Verflucht-Rekord steht in Moll: f {recMinor:0.00000} über fis {recMajor:0.00000}",
+            recMinor > recMajor);
+
+        // --- Der Siegesklang ---
+        byte[] victoryWav = SoundBank.Victory();
+        Check("Der Siegesklang ist eine lesbare WAV", WaveOutMusic.TryReadPcm(victoryWav, out short[] victory, out _, out _));
+        Check($"Er dauert sechs Sekunden (war {victory.Length / (double)Synth.SampleRate:0.00} s)",
+            Math.Abs((victory.Length / (double)Synth.SampleRate) - 6.00) < 0.05);
+        Check("Er schlägt sofort ein", SectionRms(victory, 0.0, 0.15) > 0.05);
+        Check("Er klingt lange aus", SectionRms(victory, 3.5, 4.5) > 0.005);
+        Check("Kein Umlauf: der allererste Wert ist Stille", Math.Abs(victory[0] / 32767.0) < 0.02);
+
+        // Und er steht als einziger Klang des Spiels in Dur - gemessen am Akkord,
+        // der ab 1,3 s steht: fis muss stärker sein als f.
+        float[] win = ToFloat(victory);
+        double winMajor = Goertzel(win, 1.4, 1.6, Synth.NoteToHz(66));   // fis
+        double winMinor = Goertzel(win, 1.4, 1.6, Synth.NoteToHz(65));   // f
+        Check($"Der Sieg steht in Dur: fis {winMajor:0.00000} über f {winMinor:0.00000}", winMajor > winMinor);
+
+        // Lautstärke sagt hier nichts (die Glocke im Fluch ist sogar lauter als die
+        // Fanfare) - der Unterschied ist die Helligkeit: der Sieg glänzt oben,
+        // der Fluch sitzt unten. Gemessen als Verhältnis der Sample-zu-Sample-
+        // Sprünge zum Signal selbst; das ist ein Hochpass mit einer Zeile.
+        double brightWin = Brightness(victory);
+        double brightCurse = Brightness(alarm);
+        Check($"Der Sieg klingt hell, der Fluch dumpf ({brightWin:0.000} gegen {brightCurse:0.000})",
+            brightWin > brightCurse * 3.0);
+
+        double brightGrave = Brightness(samples);
+        Check($"Die Friedhofsmusik ist das dumpfeste Stück im Spiel (war {brightGrave:0.000})",
+            brightGrave < Brightness(PcmOf(SoundBank.Music(SoundBank.MenuKey)))
+            && brightGrave < Brightness(PcmOf(SoundBank.Music(SoundBank.ImpossibleKey))));
+
+        Check($"Und auch das leiseste (RMS {rms:0.000})",
+            rms < SectionRms(PcmOf(SoundBank.Music(SoundBank.MenuKey)), 0.0, 99.0)
+            && rms < SectionRms(PcmOf(SoundBank.Music(SoundBank.ImpossibleKey)), 0.0, 99.0));
+    }
+
+    /// <summary>
+    /// Wie hell klingt ein Stück? Der Effektivwert der Sprünge zwischen benachbarten
+    /// Samples, geteilt durch den Effektivwert des Signals. Hohe Frequenzen springen
+    /// je Sample weiter als tiefe - mehr Filter braucht die Frage nicht.
+    /// </summary>
+    /// <summary>
+    /// Der Wechsel von der Menümusik ins Spiel (und zurück) wird geblendet statt
+    /// geschnitten. Geprüft wird die Blende hier rechnerisch: Beide Seiten werden mit
+    /// <see cref="WaveOutMusic.FillFromLoop"/> genauso gemischt, wie es der Zuspieler zur
+    /// Laufzeit tut - samt des Vorlaufs der Warteschlange, der beide Seiten gleich stark
+    /// verzögert. Ob Windows wirklich ein zweites waveOut-Gerät hergibt, kann hier
+    /// niemand sagen; dafür gibt es den Rückfall auf den harten Wechsel.
+    /// </summary>
+    private static void MusicCrossfadeTests()
+    {
+        Section("Musikwechsel ohne Loch (1.6.0)");
+
+        const double fade = 0.45;   // MusicFadeSeconds in MainWindow.xaml.cs
+        double queue = WaveOutMusic.QueueSeconds;
+
+        Check($"Die Warteschlange ist {queue * 1000:0} ms lang", Math.Abs(queue - 0.24) < 1e-9);
+
+        // Ohne Nachlauf würde Stop() die Warteschlange verwerfen, während das alte Stück
+        // noch auf Pegel steht - genau der Knacks, den die Blende beseitigen soll.
+        WaveOutMusic.Crossfade((fade - queue) / fade, out double cutLevel, out _);
+        Check($"Ohne Nachlauf bräche das alte Stück bei {cutLevel * 100:0} % Pegel ab", cutLevel > 0.5);
+
+        bool readMenu = WaveOutMusic.TryReadPcm(SoundBank.Music(SoundBank.MenuKey), out short[] menu, out int rate, out _);
+        Check("Die Menümusik ist lesbar", readMenu && rate == Synth.SampleRate);
+
+        int window = rate * 20 / 1000;
+        int fadeStart = (int)(queue * rate);
+        int fadeLength = (int)(fade * rate);
+
+        // Der Ausstieg aus dem Menü kann überall im Stück liegen - drei Stellen prüfen.
+        int[] exits = { menu.Length / 7, menu.Length / 3, (menu.Length * 4) / 5 };
+
+        foreach (string key in new[] { "easy", "normal", "hard" })
+        {
+            WaveOutMusic.TryReadPcm(SoundBank.Music(key), out short[] target, out _, out _);
+
+            double floor = Math.Min(
+                QuietestWindow(menu, 0, menu.Length, window),
+                QuietestWindow(target, 0, target.Length, window));
+            double worst = double.MaxValue;
+
+            foreach (int exit in exits)
+            {
+                short[] mixed = MixCrossfade(menu, exit, target, rate, fade, out _);
+                worst = Math.Min(worst, QuietestWindow(mixed, fadeStart, fadeLength, window));
+            }
+
+            Check($"Menü -> {key}: die Blende reißt kein Loch (leiseste 20 ms {worst:0.0000}, die Stücke selbst {floor:0.0000})",
+                worst >= floor);
+            Check($"Menü -> {key}: es wird nirgends still ({worst:0.0000})", worst > 0.01);
+        }
+
+        // --- Kein Knacks, und der Nachlauf ist der Grund dafür ---
+        WaveOutMusic.TryReadPcm(SoundBank.Music("normal"), out short[] game, out _, out _);
+        short[] mix = MixCrossfade(menu, menu.Length / 3, game, rate, fade, out short[] onlyOld);
+
+        double ownJump = Math.Max(
+            LargestJump(menu, menu.Length / 3, mix.Length),
+            LargestJump(game, 0, mix.Length));
+        Check($"Die Blende springt nirgends stärker als die Stücke selbst ({LargestJump(mix, 0, mix.Length):0.0000} gegen {ownJump:0.0000})",
+            LargestJump(mix, 0, mix.Length) <= ownJump);
+
+        // Ohne Nachlaufzeit endet das alte Stück, sobald die Blende durch ist: Stop()
+        // verwirft die Warteschlange, und was darin steht, wurde eine Warteschlange früher
+        // geschrieben - also noch mit Pegel. Genau dieser Abbruch wird hier nachgestellt,
+        // indem der Anteil des alten Stücks ab diesem Punkt entfällt.
+        int cut = (int)(fade * rate);
+        var chopped = new short[mix.Length];
+        Array.Copy(mix, chopped, cut);
+        for (int i = cut; i < chopped.Length; i++)
+        {
+            chopped[i] = (short)(mix[i] - onlyOld[i]);
+        }
+
+        double dropped = QuietestWindow(onlyOld, cut - window, window, window);
+        double choppedJump = LargestJump(chopped, cut - 2, 4);
+        double drainedJump = LargestJump(mix, cut - 2, 4);
+
+        Check($"Ohne Nachlauf würde das alte Stück mit {dropped:0.0000} Effektivpegel mitten im Ton abgeschnitten",
+            dropped > 0.02);
+        Check($"Der Sprung an der Bruchstelle wäre {choppedJump:0.0000} statt {drainedJump:0.0000} - Faktor {choppedJump / Math.Max(drainedJump, 1e-9):0.0}",
+            choppedJump > drainedJump * 4.0);
+    }
+
+    /// <summary>
+    /// Mischt zwei Schleifen so, wie der Zuspieler es zur Laufzeit tut: teilstückweise,
+    /// mit der Lautstärkerampe über jedes Teilstück und mit dem Vorlauf der Warteschlange.
+    /// Was jetzt geschrieben wird, ist erst eine Warteschlange später zu hören - für beide
+    /// Seiten gleich, deshalb bleibt die Summe der Quadrate stehen.
+    /// </summary>
+    private static short[] MixCrossfade(short[] from, int fromPosition, short[] to, int rate, double fade, out short[] fromOnly)
+    {
+        double queue = WaveOutMusic.QueueSeconds;
+        double chunkSeconds = WaveOutMusic.ChunkMs / 1000.0;
+        int chunk = rate * WaveOutMusic.ChunkMs / 1000;
+        int chunks = (int)Math.Ceiling((fade + queue + 0.3) / chunkSeconds);
+
+        var mixed = new short[chunks * chunk];
+        fromOnly = new short[chunks * chunk];
+
+        var bufferFrom = new short[chunk];
+        var bufferTo = new short[chunk];
+        int positionFrom = fromPosition;
+        int positionTo = 0;
+
+        for (int c = 0; c < chunks; c++)
+        {
+            double write = (c * chunkSeconds) - queue;
+            WaveOutMusic.Crossfade(write / fade, out double outStart, out double inStart);
+            WaveOutMusic.Crossfade((write + chunkSeconds) / fade, out double outEnd, out double inEnd);
+
+            positionFrom = WaveOutMusic.FillFromLoop(from, positionFrom, bufferFrom, chunk, outStart, outEnd);
+            positionTo = WaveOutMusic.FillFromLoop(to, positionTo, bufferTo, chunk, inStart, inEnd);
+
+            for (int i = 0; i < chunk; i++)
+            {
+                mixed[(c * chunk) + i] = (short)Math.Clamp(bufferFrom[i] + bufferTo[i], short.MinValue, short.MaxValue);
+                fromOnly[(c * chunk) + i] = bufferFrom[i];
+            }
+        }
+
+        return mixed;
+    }
+
+    /// <summary>Kleinster Effektivwert über ein gleitendes Fenster - das Maß für ein Loch.</summary>
+    private static double QuietestWindow(short[] samples, int start, int length, int window)
+    {
+        double quietest = double.MaxValue;
+
+        for (int offset = 0; offset + window <= length; offset += window / 2)
+        {
+            double sum = 0.0;
+            for (int i = 0; i < window; i++)
+            {
+                double value = samples[(start + offset + i) % samples.Length] / 32768.0;
+                sum += value * value;
+            }
+
+            quietest = Math.Min(quietest, Math.Sqrt(sum / window));
+        }
+
+        return quietest;
+    }
+
+    /// <summary>Größter Sprung von einem Sample zum nächsten - das Maß für einen Knacks.</summary>
+    private static double LargestJump(short[] samples, int start, int length)
+    {
+        double largest = 0.0;
+
+        for (int i = 1; i < length; i++)
+        {
+            double previous = samples[(start + i - 1) % samples.Length] / 32768.0;
+            double current = samples[(start + i) % samples.Length] / 32768.0;
+            largest = Math.Max(largest, Math.Abs(current - previous));
+        }
+
+        return largest;
+    }
+
+    private static double Brightness(short[] samples)
+    {
+        double energy = 0.0;
+        double steps = 0.0;
+
+        for (int i = 1; i < samples.Length; i++)
+        {
+            double value = samples[i] / 32767.0;
+            double previous = samples[i - 1] / 32767.0;
+            energy += value * value;
+            steps += (value - previous) * (value - previous);
+        }
+
+        return energy <= 0.0 ? 0.0 : Math.Sqrt(steps / energy);
+    }
+
+    private static short[] PcmOf(byte[] wav)
+    {
+        WaveOutMusic.TryReadPcm(wav, out short[] samples, out _, out _);
+        return samples;
+    }
+
+    private static bool SevenDistinctTracks()
+    {
+        string[] keys =
+        {
+            SoundBank.MenuKey, "easy", "normal", "hard",
+            SoundBank.HardcoreKey, SoundBank.ImpossibleKey, SoundBank.CursedKey
+        };
+
+        var lengths = new HashSet<int>();
+        foreach (string key in keys)
+        {
+            lengths.Add(SoundBank.Music(key).Length);
+        }
+
+        return lengths.Count == keys.Length;
+    }
+
+    private static float[] ToFloat(short[] samples)
+    {
+        var buffer = new float[samples.Length];
+        for (int i = 0; i < samples.Length; i++)
+        {
+            buffer[i] = samples[i] / 32767f;
+        }
+
+        return buffer;
+    }
+
+    // ------------------------------------------------------------------
+
     private static double SectionRms(short[] samples, double from, double to)
     {
         int start = Math.Clamp((int)(from * Synth.SampleRate), 0, samples.Length);
@@ -904,6 +1937,24 @@ internal static class Program
             File.WriteAllText(path, "{ kaputt");
             var broken = new GameSettings(path);
             Check("Kaputte Datei: Standardwerte, Fehler gemerkt", broken.Fullscreen && broken.LastError != null);
+
+            // --- Die Krone: einmal durchgespielt, für immer aufgesetzt (1.6.0) ---
+            string crownPath = Path.Combine(Path.GetDirectoryName(path)!, "krone.json");
+
+            var before = new GameSettings(crownPath);
+            Check("Am Anfang ist noch nicht durchgespielt", !before.Completed);
+            Check("Der erste Sieg zählt", before.MarkCompleted() && before.Completed);
+            Check("Der zweite Sieg ändert nichts mehr", !before.MarkCompleted() && before.Completed);
+
+            before.Save();
+            var after = new GameSettings(crownPath);
+            Check("Die Krone überlebt den Neustart", after.Completed);
+            Check("Und sie bleibt auch nach erneutem Speichern", SaveAndReload(after).Completed);
+
+            // Datei aus 1.5.0: kein "completed"-Feld - dann hat noch niemand gewonnen.
+            File.WriteAllText(crownPath, "{ \"musicVolume\": 0.5, \"fullscreen\": false }");
+            var old = new GameSettings(crownPath);
+            Check("Datei aus 1.5.0 ohne Feld: keine Krone, Rest übernommen", !old.Completed && !old.Fullscreen);
         }
         finally
         {

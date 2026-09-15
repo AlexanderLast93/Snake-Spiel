@@ -24,8 +24,24 @@ namespace Snake_Spiel.Game
         /// <summary>Kollision mit dem eigenen Körper - Spiel vorbei.</summary>
         Died,
 
-        /// <summary>Spielfeld komplett gefüllt - gewonnen.</summary>
+        /// <summary>Spielfeld komplett gefüllt oder Ziel-Level erreicht - gewonnen.</summary>
         Won
+    }
+
+    /// <summary>Woran ein Lauf geendet ist. Für die Anzeige auf der Schlusstafel.</summary>
+    public enum EndCause
+    {
+        /// <summary>Der Lauf ist noch offen.</summary>
+        None,
+
+        /// <summary>In den eigenen Körper gefahren.</summary>
+        SelfCollision,
+
+        /// <summary>Kein freies Feld mehr - das Spielfeld ist voll.</summary>
+        BoardFull,
+
+        /// <summary>Das Ziel-Level ist erreicht: durchgespielt.</summary>
+        Goal
     }
 
     /// <summary>Ein Feld auf dem Spielraster.</summary>
@@ -110,6 +126,14 @@ namespace Snake_Spiel.Game
 
         public bool HasFood { get; private set; }
 
+        /// <summary>
+        /// Punkte je Happen - die einzige Quelle von Punkten im Spiel. Weil es keine
+        /// anderen gibt, ist ein Punktestand immer ein Vielfaches davon, und aus einem
+        /// gespeicherten Highscore lässt sich zurückrechnen, wie viel Futter er war
+        /// (siehe <see cref="Difficulty.StageForScore"/>).
+        /// </summary>
+        public const int PointsPerFood = 10;
+
         public int Score { get; private set; }
 
         public int FoodEaten { get; private set; }
@@ -117,6 +141,15 @@ namespace Snake_Spiel.Game
         public Direction CurrentDirection { get; private set; }
 
         public bool IsFinished { get; private set; }
+
+        /// <summary>Woran der Lauf geendet ist; <see cref="EndCause.None"/>, solange er läuft.</summary>
+        public EndCause Ending { get; private set; }
+
+        /// <summary>
+        /// So viele Happen bedeuten den Sieg; 0 heißt: das Spiel hört nur auf,
+        /// wenn das Feld voll ist. Gesetzt wird das aus <see cref="Difficulty.WinFoodCount"/>.
+        /// </summary>
+        public int WinFoodCount { get; set; }
 
         /// <summary>
         /// Lebensdauer des Futters in Spielschritten; 0 heißt: es bleibt liegen.
@@ -149,6 +182,7 @@ namespace Snake_Spiel.Game
             FoodAgeTicks = 0;
             FoodRelocated = false;
             IsFinished = false;
+            Ending = EndCause.None;
             CurrentDirection = Direction.Right;
 
             int startY = Rows / 2;
@@ -235,6 +269,7 @@ namespace Snake_Spiel.Game
                 }
 
                 IsFinished = true;
+                Ending = EndCause.SelfCollision;
                 return StepResult.Died;
             }
 
@@ -249,12 +284,22 @@ namespace Snake_Spiel.Game
 
             FoodAgeTicks = 0;
             FoodEaten++;
-            Score += 10;
+            Score += PointsPerFood;
             HasFood = false;
+
+            // Durchgespielt: Das letzte Futter des Ziel-Levels liegt im Bauch.
+            if (WinFoodCount > 0 && FoodEaten >= WinFoodCount)
+            {
+                IsFinished = true;
+                Ending = EndCause.Goal;
+                RememberPositions();
+                return StepResult.Won;
+            }
 
             if (!SpawnFood())
             {
                 IsFinished = true;
+                Ending = EndCause.BoardFull;
                 return StepResult.Won;
             }
 
@@ -308,6 +353,110 @@ namespace Snake_Spiel.Game
             FoodRelocated = true;
         }
 
+        /// <summary>
+        /// Springt im Spielstand nach vorn, ohne dass dafür gespielt werden muss:
+        /// schreibt Happen gut und lässt die Schlange entsprechend wachsen. Gedacht
+        /// allein für die Sichtprüfung der späten Stufen (Messanzeige F3, Taste L) -
+        /// wer das benutzt, spielt nicht, sondern schaut sich etwas an. Die Oberfläche
+        /// merkt sich das und trägt einen solchen Lauf nicht in die Rekordliste ein.
+        /// Bei einem Grad mit Ziel wird vor dem letzten Happen angehalten: Den soll
+        /// man selbst fressen, sonst sieht man die Schlusstafel nie richtig kommen.
+        /// </summary>
+        /// <returns>Wie viele Happen tatsächlich gutgeschrieben wurden.</returns>
+        public int FastForward(int foodCount)
+        {
+            if (IsFinished || foodCount <= 0)
+            {
+                return 0;
+            }
+
+            int target = FoodEaten + foodCount;
+            if (WinFoodCount > 0)
+            {
+                target = Math.Min(target, WinFoodCount - 1);
+            }
+
+            int added = 0;
+            while (FoodEaten < target && GrowTail())
+            {
+                FoodEaten++;
+                Score += PointsPerFood;
+                added++;
+            }
+
+            if (added > 0)
+            {
+                // Frisches Futter - der Sprung soll keinen halb abgelaufenen
+                // Happen hinterlassen.
+                FoodAgeTicks = 0;
+                RememberPositions();
+            }
+
+            return added;
+        }
+
+        /// <summary>
+        /// Hängt ein Feld an den Schwanz an. Nicht irgendeines: Von den freien Nachbarn
+        /// wird der mit den <em>wenigsten</em> eigenen freien Nachbarn genommen - die
+        /// Regel von Warnsdorff, bekannt vom Springerproblem. Sie klingt verkehrt herum,
+        /// ist es aber nicht: Wer die engen Felder zuerst aufbraucht, lässt keine
+        /// einzelnen Löcher zurück, in die später niemand mehr hineinkommt.
+        /// Gemessen über 60 Läufe bis Länge 78: zufällige Wahl schafft das in 33 % der
+        /// Fälle, "möglichst viel Platz" in 82 %, diese Regel in 100 %.
+        /// Bei Gleichstand entscheidet der Zufall, sonst wächst die Schlange in einer
+        /// schnurgeraden Linie. Das Futterfeld bleibt frei.
+        /// </summary>
+        /// <returns>false, wenn um den Schwanz herum nichts mehr frei ist.</returns>
+        private bool GrowTail()
+        {
+            GridPoint tail = _snake[_snake.Count - 1];
+            GridPoint best = default;
+            int bestSpace = int.MaxValue;
+            int seen = 0;
+
+            for (int i = 0; i < 4; i++)
+            {
+                GridPoint candidate = NextHead(tail, (Direction)i);
+                if (!IsFreeForGrowth(candidate))
+                {
+                    continue;
+                }
+
+                int space = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    if (IsFreeForGrowth(NextHead(candidate, (Direction)j)))
+                    {
+                        space++;
+                    }
+                }
+
+                // Gleichstand fair auflösen: jeder gleich gute Kandidat bekommt
+                // dieselbe Chance, ohne die Liste vorher einzusammeln.
+                if (space < bestSpace)
+                {
+                    bestSpace = space;
+                    best = candidate;
+                    seen = 1;
+                }
+                else if (space == bestSpace && _random.Next(++seen) == 0)
+                {
+                    best = candidate;
+                }
+            }
+
+            if (seen == 0)
+            {
+                return false;
+            }
+
+            _snake.Add(best);
+            _occupied.Add(best);
+            return true;
+        }
+
+        private bool IsFreeForGrowth(GridPoint cell) => !_occupied.Contains(cell) && !(HasFood && cell == Food);
+
         /// <summary>Berechnet das Zielfeld inklusive Durchgang durch die Wände.</summary>
         public GridPoint NextHead(GridPoint from, Direction direction)
         {
@@ -351,7 +500,10 @@ namespace Snake_Spiel.Game
         /// <returns>false, wenn kein Feld mehr frei ist.</returns>
         private bool SpawnFood()
         {
-            int freeCells = (Columns * Rows) - _snake.Count;
+            // _occupied ist die Schlange samt Grabsteinen - nicht _snake.Count nehmen,
+            // sonst würfelt der Zähler unten auf ein Feld, das es gar nicht gibt, und
+            // die Suche läuft ins Leere: das Spiel meldete "Feld voll" mitten im Lauf.
+            int freeCells = (Columns * Rows) - _occupied.Count;
             if (freeCells <= 0)
             {
                 HasFood = false;

@@ -1,15 +1,24 @@
 ﻿# Snake
 
-Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.5.0.
+Ein Snake-Spiel für Windows in C# und WPF (.NET 10). Version 1.7.0.
 
-Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Es gibt drei
-Schwierigkeitsgrade, einen lokal gespeicherten Rekord je Grad und Musik, die das Programm
-beim Start selbst berechnet — es wird keine einzige Audiodatei mitgeliefert.
+Die Wände sind offen: Wer rechts hinausfährt, kommt links wieder herein. Der Highscore wird
+lokal gespeichert, und die Musik berechnet das Programm beim Start selbst — es wird keine
+einzige Audiodatei mitgeliefert.
 
-Alle drei Grade beschleunigen bis zum selben Endtempo von 42 Millisekunden pro Zug. Der
-Unterschied ist allein die Anlaufstrecke: **Langsam** braucht 130 Kugeln dorthin, **Normal** 56,
-**Schnell** 27. Ein Grad ist also kein Deckel, sondern die Frage, wie viel Zeit man zum
-Warmwerden bekommt. Die Schlange trägt die Farbe ihres Grades: blau, türkis, gelb.
+Es gibt **keine Auswahl von Schwierigkeitsgraden**. Im Menü steht eine Kachel: **START**. Was
+dahintersteht, entscheidet, wie weit man gekommen ist. Wer das Spiel zum ersten Mal öffnet, kann
+genau eine Sache tun — das **Tutorial** spielen. Wer es abschließt, schaltet den nächsten Modus
+frei, und mit ihm den übernächsten. Drei Modi, eine Kette, immer nur einer offen. Der Highscore
+im Menü ist immer der des aktuellen Modus; die davor sind abgeschlossen und werden nicht mehr
+mitgeschleppt.
+
+Alle Modi beschleunigen bis zum selben Endtempo von 42 Millisekunden pro Zug. Der Unterschied ist
+die Anlaufstrecke und das Ziel: Das Tutorial nimmt 5 Kugeln je Level und endet früh, der letzte
+Modus 3 und endet spät. Ein Modus ist also kein Deckel, sondern eine Strecke.
+
+Unten in der Mitte des Menüs steht ein Knopf, der den ganzen Fortschritt zurück aufs Tutorial
+setzt. Er fragt einmal nach, und dann ist es endgültig: Die Highscores sind danach weg.
 
 Die Schlange gleitet: Die Spiellogik läuft mit fester Schrittrate, gezeichnet wird mit der
 Bildrate des Monitors, dazwischen wird interpoliert — auch durch die Wände hindurch. Fressen
@@ -22,16 +31,24 @@ Die Zellgröße wird in ganzen Pixeln aus dem Platz berechnet (Full HD: 51 px, 2
 und zurück; die Wahl wird gespeichert. Im Menü läuft eine eigene, ruhige Musik.
 
 Beim Start kommt der Vorspann: Das Raster fährt auf, die Schlange kriecht durchs Bild und frisst,
-daraus schlägt der Titel ein, und ein Sprecher sagt „Snaaaake — Alexander Last Edition". Die Stimme
-ist keine Aufnahme und auch nicht die Windows-Sprachausgabe, sondern wird aus Formanten gerechnet
-(`Game/Speech.cs`) — Glottisimpulse durch vier parallele Resonatoren, deren Lage den Laut bestimmt.
-Jede Taste überspringt den Vorspann.
+daraus schlägt der Titel ein, dann wischt der Untertitel herein. Dazu läuft ein durchkomponiertes
+Stück — ein Aufzug mit Schlägen, die schneller werden, der Einschlag, eine Fanfare zum Titel, eine
+Antwortphrase zum Untertitel und ein Am7-Teppich, der die Menümusik im selben Akkord übernimmt.
+Das ist kein Zufall im Takt: Vom Einschlag bis zum Untertitel liegen genau vier Schläge, jeder
+Bildwechsel fällt auf eine Zählzeit. Am Ende blenden Bild und Ton über dieselbe Strecke — der
+Vorspann klingt aus, während die Menümusik schon einsetzt, beide im selben Akkord. Jede Taste
+überspringt den Vorspann; auch dann wird geblendet statt geschnitten.
+
+Auch der Wechsel vom Menü ins Spiel wird geblendet: Beide Stücke laufen dafür knapp eine
+halbe Sekunde gleichzeitig über je ein eigenes Tongerät. Ein einfaches Umschalten ginge
+nicht ohne Loch — das Anhalten verwirft die 240 Millisekunden, die im Tongerät schon
+gepuffert sind, und schneidet die Musik mitten in der Welle ab.
 
 Der Neonschein von Schlange, Futter und Feld ist kein Shader-Effekt mehr, sondern wird einmal in
 ein Bitmap gerechnet und als Bild hinter das Objekt gelegt. Auf dem großen Vollbild-Feld hatte der
 `DropShadowEffect` zwei Drittel der Bildrate gekostet (24 bis 35 FPS); mit Sprites sind es 60.
 
-Wer auf **Schnell** lange genug überlebt, wird feststellen, dass das Spiel noch etwas vorhat.
+Wer im letzten Modus lange genug überlebt, wird feststellen, dass das Spiel noch etwas vorhat.
 
 <details>
 <summary>Was dann passiert (Spoiler — lieber selbst herausfinden)</summary>
@@ -39,9 +56,28 @@ Wer auf **Schnell** lange genug überlebt, wird feststellen, dass das Spiel noch
 Ab Level 10, also nach 27 Kugeln, kippt der Lauf in den **Hardcore-Zustand**: Die Schlange wird
 orange, das Futter verfällt nach drei Sekunden und taucht woanders auf, die Musik wechselt.
 
-Ab Level 15, nach 42 Kugeln, wird es **Unmöglich** — rote Schlange, anderthalb Sekunden
+Ab Level 15, nach 42 Kugeln, wird es **Unmöglich** — rote Schlange, zwei Sekunden
 Futterzeit und ein Soundtrack, der keine Gefangenen macht. Das Tempo bleibt dabei bewusst
 gleich: Bei 24 Zügen pro Sekunde entscheidet sonst die Reaktionszeit statt des Könnens.
+
+Ab Level 20, nach 57 Kugeln, ist der Lauf **Verflucht**. Hier gibt es keine neue Regel — nur
+Dunkelheit. Die Schlange wird schwarz und leuchtet nur noch rot, die Augen glühen, Rahmen und
+Schein des Feldes wechseln ins Blutrote. Und das Futter ist kein leuchtender Punkt mehr, sondern
+ein **Grabstein** in Steinfarbe mit rotem Rand, der 1,75 Sekunden liegen bleibt.
+
+Das ist die ganze Stufe: **Man sieht fast nichts.** Weder den eigenen Körper noch das, wonach man
+sucht — gemessen hebt sich der Stein nur im Verhältnis 1,96:1 vom Feld ab, das Magenta-Futter der
+anderen Stufen schafft 7,17:1. Gestorben wird weiterhin ausschließlich am eigenen Körper; wer das
+Futter nicht findet, verliert kein Leben, sondern Zeit. Die Musik wird dabei nicht schneller,
+sondern langsamer — 60 Schläge pro Minute, Drone, Grabglocke und eine Spieldose, deren Feder
+ausgeleiert ist. Selbst Fressen, Levelaufstieg und Highscore bekommen eigene Klänge: Stein auf Stein
+statt hellem Blip, zwei Glockenschläge in der kleinen Terz statt einer Fanfare, und zum Highscore
+drei steigende Glocken über einem anschwellenden Chor statt heller Trompeten. Auch der Funkenschlag
+beim Fressen ist umgefärbt — Steinstaub, Bruch und Rot statt Magenta.
+
+Und dann hat das Spiel doch ein Ende: **Wer das letzte Futter von Level 25 frisst, hat Snake
+durchgespielt.** Was dann kommt, steht hier nicht — nur so viel: Es bleibt danach sichtbar,
+und zwar für immer.
 
 </details>
 
@@ -63,30 +99,30 @@ das Spiel. Wer lieber selbst baut, findet weiter unten die Anleitung dazu.
 | Enter oder R | neu starten |
 | Esc | zurück ins Menü |
 | M | Ton stumm schalten |
-| 1 / 2 / 3 | Schwierigkeitsgrad wählen |
 | F11 | Vollbild oder Fenster (auch Doppelklick auf die Titelleiste im Fenstermodus) |
 | Zahnrad | Lautstärke für Musik und Effekte, Vollbild an/aus |
 | F3 / F4 | Messanzeige ein- und ausblenden / Scheineffekte abschalten (zur Fehlersuche) |
+| L | nur bei offener Messanzeige: 5 Level vorspulen. Damit lassen sich die späten Stufen ansehen, ohne sie zu erspielen — ein so abgekürzter Lauf wird nicht als Highscore gewertet |
 
 ## Aufbau des Projekts
 
 | Datei | Aufgabe |
 |---|---|
-| `Game/GameEngine.cs` | Spielregeln: Bewegung, offene Wände, Kollision, Futter, Punkte — ohne jeden Bezug zur Oberfläche |
-| `Game/Difficulty.cs` | Die drei Schwierigkeitsgrade mit Tempo und Steigerung |
+| `Game/GameEngine.cs` | Spielregeln: Bewegung, offene Wände, Kollision, verfallendes Futter, Punkte, Sieg — ohne jeden Bezug zur Oberfläche |
+| `Game/Difficulty.cs` | Die drei Modi der Kette mit Tempo, Steigerung, den Eskalationsstufen und dem Ziel-Level |
 | `Game/StepClock.cs` | Fixed-Step-Uhr: feste Logikrate, liefert den Interpolationsanteil fürs Zeichnen |
 | `Game/GridMotion.cs` | Bewegung eines Segments zwischen zwei Feldern, wandbewusst (24 → 0 heißt „nach 25“) |
-| `Game/HighScoreService.cs` | Rekord je Grad, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
-| `Game/GameSettings.cs` | Lautstärken und Fenstermodus, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
-| `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Echo, WAV-Ausgabe |
-| `Game/Speech.cs` | Sprachsynthese aus Formanten: der Sprecher im Vorspann, ohne Sprachdatei und ohne Windows-Sprachausgabe |
-| `Game/SoundBank.cs` | Die konkreten Klänge, die sechs Musikstücke (Menü, drei Grade, Hardcore, Unmöglich) und die Tonspur des Vorspanns samt Fahrplan |
+| `Game/HighScoreService.cs` | Highscore je Modus, gespeichert unter `%AppData%\SnakeSpiel\highscores.json` |
+| `Game/GameSettings.cs` | Lautstärken, Fenstermodus und die Auszeichnung fürs Durchspielen, gespeichert unter `%AppData%\SnakeSpiel\settings.json` |
+| `Game/Synth.cs` | Kleiner Synthesizer: Oszillatoren, Hüllkurven, Glocke, Echo, WAV-Ausgabe |
+| `Game/SoundBank.cs` | Die konkreten Klänge, die sieben Musikstücke (Menü, drei Modi, Hardcore, Unmöglich, Verflucht) und die Tonspur des Vorspanns samt Fahrplan |
 | `Game/SoundEngine.cs` | Wiedergabe: Effekte über `MediaPlayer`, Musik über `WaveOutMusic`, Stummschaltung |
 | `Game/WaveOutMusic.cs` | Musikschleife ohne hörbare Naht: eigene Ausgabe über `waveOut` (winmm), Leseposition läuft im Kreis |
 | `MainWindow.xaml(.cs)` | Fenster, Vollbild, Darstellung mit bildschirmabhängiger Zellgröße, Eingaben |
 | `App.xaml` | Farben und Stile |
-| `Assets/` | Snake-Logo (oben links) und AL-Logo (oben rechts), als Ressource in der EXE |
+| `Assets/` | Snake-Logo (oben links, mit Krone nach dem Durchspielen) und AL-Logo (oben rechts), als Ressource in der EXE |
 | `Tests/` | Teststand: Konsolenprojekt ohne WPF, prüft Engine, Eingabepuffer, Uhr, Interpolation, Musik, Schleifennaht und Einstellungen |
+| `spielen.cmd` | Schnelle Testrunde: baut (Release) und startet das Spiel sofort — Doppelklick statt Visual Studio |
 | `pruefen.cmd` | Baut das Spiel und lässt den Teststand laufen; Protokoll in `Claude outputs\pruefung.log` |
 | `ton-pruefen.cmd` | Tonprobe zum Hinhören: Dauerton, Pause, Lautstärke und die Wiederholung der Menümusik |
 | `intro-pruefen.cmd` | Baut, prüft und legt Bildschirmfotos vom Vorspann in `Claude outputs\intro` ab |
@@ -112,7 +148,7 @@ In Visual Studio genügt F5.
 Doppelklick auf `veroeffentlichen.cmd`. Das Skript legt
 
 ```
-release\v1.5.0\Snake.exe
+release\v1.7.0\Snake.exe
 ```
 
 an: eine einzige Datei mit eingebauter .NET-Laufzeit. Sie startet auf jedem 64-Bit-Windows,
